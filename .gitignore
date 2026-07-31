@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.venv/
+.env
+.env.*
+pip-wheel-metadata/
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+.ruff_cache/
+
+# Data artifacts
+data/
+
+# Editor
+.vscode/
+.idea/
+*.swp
