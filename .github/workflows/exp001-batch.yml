@@ -1,0 +1,45 @@
+# CMP Sub 2 pilot batch — build the blinded, stratified review batch on cn-sigma
+# and commit the two bounded fixtures so a fresh context can classify them.
+# Price-free, outcome-blind. Throwaway egress wrapper like the other exp001 workflows.
+name: exp001-batch
+
+on:
+  push:
+    branches: [claude/cmp-experiment-001-issue-c1oov4]
+    paths:
+      - '.github/workflows/exp001-batch.yml'
+      - 'scripts/build_review_batch.py'
+      - 'scripts/gen_candidate_pairs.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: exp001-batch
+  cancel-in-progress: false
+
+jobs:
+  batch:
+    runs-on: [self-hosted, cn-sigma]
+    env:
+      CMP_DATA_DIR: /var/lib/cmp/data
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Generate candidate pairs
+        run: python3 scripts/gen_candidate_pairs.py
+      - name: Build blinded stratified batch
+        run: python3 scripts/build_review_batch.py
+      - name: Commit fixtures
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          git add -f derived/classification_input.jsonl derived/evaluation_manifest.jsonl || true
+          if git diff --cached --quiet; then
+            echo "no fixture changes"
+          else
+            git commit -m "exp001 Sub2: blinded pilot batch fixtures (input + manifest) [skip ci]"
+            git push origin HEAD:claude/cmp-experiment-001-issue-c1oov4
+          fi
