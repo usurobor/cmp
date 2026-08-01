@@ -128,14 +128,82 @@ def _page_path(page: int) -> Path:
     return RAW_DIR / f"markets_p{page:05d}.json"
 
 
-def _replay_snapshots(upto_page: int) -> tuple[list[dict], list[dict], set]:
+class MarketStats:
+    """Streaming aggregate over the corpus.
+
+    The raw pages are already durably on disk before this ever sees a record,
+    so retaining the parsed dicts only to compute a handful of summary values
+    is pure duplication — and it grows without bound, which is what OOM-killed
+    the full run. Everything the manifest, the peek, and the price sampler
+    actually need is a reduction: counts, a running min/max, the first record,
+    and the first few price-capable candidates. All O(1) in corpus size.
+    """
+
+    __slots__ = ("count", "with_prices", "with_rules", "earliest", "latest",
+                 "first", "price_candidates", "_want")
+
+    # Keep a cushion beyond --price-samples: sample_price_history skips
+    # candidates whose history fetch fails, and the old code could walk the
+    # entire corpus looking for replacements.
+    CANDIDATE_CUSHION = 20
+
+    def __init__(self, price_samples: int = 0) -> None:
+        self.count = 0
+        self.with_prices = 0
+        self.with_rules = 0
+        self.earliest: str | None = None
+        self.latest: str | None = None
+        self.first: dict | None = None
+        self.price_candidates: list[dict] = []
+        self._want = max(price_samples, 0) + (self.CANDIDATE_CUSHION
+                                              if price_samples > 0 else 0)
+
+    def add(self, m: dict) -> None:
+        self.count += 1
+        if self.first is None:
+            self.first = m
+
+        raw_tokens = m.get("clobTokenIds")
+        if raw_tokens:
+            self.with_prices += 1
+            if len(self.price_candidates) < self._want and _parse_tokens(raw_tokens):
+                # Only retain candidates that actually parse, so the pool
+                # matches what the sampler would really have used.
+                self.price_candidates.append(m)
+
+        if m.get("description") or m.get("resolutionSource"):
+            self.with_rules += 1
+
+        v = m.get("endDate") or m.get("end_date")
+        if isinstance(v, str) and v:
+            if self.earliest is None or v < self.earliest:
+                self.earliest = v
+            if self.latest is None or v > self.latest:
+                self.latest = v
+
+    def time_range(self) -> dict:
+        return {"earliest_endDate": self.earliest, "latest_endDate": self.latest}
+
+
+def _parse_tokens(raw):
+    """Decode clobTokenIds, tolerating the string-encoded form. None if unusable."""
+    try:
+        toks = json.loads(raw) if isinstance(raw, str) else raw
+    except json.JSONDecodeError:
+        return None
+    return toks or None
+
+
+def _replay_snapshots(upto_page: int, stats: MarketStats
+                      ) -> tuple[list[dict], set]:
     """Rebuild collected state from raw snapshots already on disk.
 
     Snapshots are immutable and page-indexed, so a resumed run reconstructs
-    exactly what a single uninterrupted run would have held in memory.
+    exactly the aggregate a single uninterrupted run would have held. Records
+    are folded into `stats` page by page and then released, so replaying a
+    3,000-page corpus costs one page of memory, not the whole corpus.
     """
     snapshots: list[dict] = []
-    markets: list[dict] = []
     seen_ids: set = set()
     for page in range(upto_page + 1):
         path = _page_path(page)
@@ -154,8 +222,8 @@ def _replay_snapshots(upto_page: int) -> tuple[list[dict], list[dict], set]:
         for m in batch:
             if m.get("id") not in seen_ids:
                 seen_ids.add(m.get("id"))
-                markets.append(m)
-    return snapshots, markets, seen_ids
+                stats.add(m)
+    return snapshots, seen_ids
 
 
 def _save_checkpoint(page: int, cursor: str | None, collected: int) -> None:
@@ -163,13 +231,17 @@ def _save_checkpoint(page: int, cursor: str | None, collected: int) -> None:
         {"next_page": page, "cursor": cursor, "collected": collected}))
 
 
-def collect_markets(limit: int, max_pages: int | None, resume: bool = False
-                    ) -> tuple[list[dict], dict]:
+def collect_markets(limit: int, max_pages: int | None, resume: bool = False,
+                    price_samples: int = 0) -> tuple[MarketStats, dict]:
     """Page the whole closed-market corpus via keyset pagination.
 
-    Returns (markets, state) where state carries completion/stop info for the
-    manifest. Never raises for fetch failures — a partial result plus an honest
-    `stopped_reason` beats an exception that loses the pages already on disk.
+    Returns (stats, state) where stats is a streaming aggregate and state
+    carries completion/stop info for the manifest. Never raises for fetch
+    failures — a partial result plus an honest `stopped_reason` beats an
+    exception that loses the pages already on disk.
+
+    Records are written to disk and folded into `stats`, never retained: the
+    corpus is >1.3M markets and holding it would exhaust any reasonable box.
 
     A checkpoint is written after every page, so an interrupted run (SIGKILL,
     dropped connection, closed laptop) resumes with --resume instead of
@@ -177,7 +249,7 @@ def collect_markets(limit: int, max_pages: int | None, resume: bool = False
     """
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     snapshots: list[dict] = []
-    all_markets: list[dict] = []
+    stats = MarketStats(price_samples)
     seen_ids: set = set()
 
     cursor: str | None = None
@@ -190,8 +262,8 @@ def collect_markets(limit: int, max_pages: int | None, resume: bool = False
     if resume and CHECKPOINT_PATH.exists():
         ck = json.loads(CHECKPOINT_PATH.read_text())
         page, cursor = ck["next_page"], ck["cursor"]
-        snapshots, all_markets, seen_ids = _replay_snapshots(page - 1)
-        print(f"resuming at page {page} with {len(all_markets)} markets replayed from disk")
+        snapshots, seen_ids = _replay_snapshots(page - 1, stats)
+        print(f"resuming at page {page} with {stats.count} markets replayed from disk")
         if cursor:
             seen_cursors.add(cursor)
 
@@ -227,13 +299,18 @@ def collect_markets(limit: int, max_pages: int | None, resume: bool = False
             })
 
             # Trap 2: an ignored/echoed cursor silently re-serves the same page.
-            new = [m for m in batch if m.get("id") not in seen_ids]
-            duplicates += len(batch) - len(new)
-            for m in new:
+            new_count = 0
+            for m in batch:
+                if m.get("id") in seen_ids:
+                    continue
                 seen_ids.add(m.get("id"))
-            all_markets.extend(new)
+                stats.add(m)
+                new_count += 1
+            duplicates += len(batch) - new_count
+            # `batch` goes out of scope with the loop — nothing is retained.
+            new = new_count
 
-            print(f"page {page} n={len(batch)} new={len(new)} total={len(all_markets)}")
+            print(f"page {page} n={len(batch)} new={new_count} total={stats.count}")
 
             if not batch:
                 complete, reason = True, "empty page — end of closed markets"
@@ -257,7 +334,7 @@ def collect_markets(limit: int, max_pages: int | None, resume: bool = False
             page += 1
             # Checkpoint AFTER the page is durably on disk, so a resume never
             # skips a page it only partially wrote.
-            _save_checkpoint(page, cursor, len(all_markets))
+            _save_checkpoint(page, cursor, stats.count)
 
     except FetchError as e:
         reason = f"fetch failed: {e}"
@@ -273,27 +350,26 @@ def collect_markets(limit: int, max_pages: int | None, resume: bool = False
         "duplicate_records_skipped": duplicates,
         "snapshots": snapshots,
     }
-    return all_markets, state
+    return stats, state
 
 
-def sample_price_history(markets: list[dict], n: int) -> dict:
-    """Grab price history for the first n markets that expose CLOB token ids."""
+def sample_price_history(candidates: list[dict], n: int) -> dict:
+    """Grab price history for the first n markets that expose CLOB token ids.
+
+    `candidates` is the bounded pool MarketStats retained during collection —
+    already filtered to markets whose clobTokenIds parse — rather than the
+    whole corpus.
+    """
     result = {"requested": n, "collected": 0, "failed": 0}
     if n <= 0:
         return result
     PRICES_DIR.mkdir(parents=True, exist_ok=True)
     got = 0
     failed = 0
-    for m in markets:
+    for m in candidates:
         if got >= n:
             break
-        raw_tokens = m.get("clobTokenIds")
-        if not raw_tokens:
-            continue
-        try:
-            token_ids = json.loads(raw_tokens) if isinstance(raw_tokens, str) else raw_tokens
-        except json.JSONDecodeError:
-            continue
+        token_ids = _parse_tokens(m.get("clobTokenIds"))
         if not token_ids:
             continue
         token = token_ids[0]
@@ -314,19 +390,7 @@ def sample_price_history(markets: list[dict], n: int) -> dict:
     return result
 
 
-def _rough_time_range(markets: list[dict]) -> dict:
-    """Best-effort min/max endDate; tolerant of missing/odd fields."""
-    ends = []
-    for m in markets:
-        v = m.get("endDate") or m.get("end_date")
-        if isinstance(v, str) and v:
-            ends.append(v)
-    ends.sort()
-    return {"earliest_endDate": ends[0] if ends else None,
-            "latest_endDate": ends[-1] if ends else None}
-
-
-def _write_manifest(state: dict, markets: list[dict], limit: int, prices: dict | None) -> None:
+def _write_manifest(state: dict, stats: MarketStats, limit: int, prices: dict | None) -> None:
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     manifest = {
         "experiment": "001",
@@ -342,10 +406,10 @@ def _write_manifest(state: dict, markets: list[dict], limit: int, prices: dict |
         "complete": state["complete"],
         "stopped_reason": state["stopped_reason"],
         "pages_fetched": state["pages_fetched"],
-        "total_markets": len(markets),
+        "total_markets": stats.count,
         "duplicate_records_skipped": state["duplicate_records_skipped"],
         "price_history": prices,
-        "time_range": _rough_time_range(markets),
+        "time_range": stats.time_range(),
         "snapshots": state["snapshots"],
         "coverage_note": (
             "Exploratory pull of closed Polymarket markets via the public Gamma "
@@ -359,13 +423,13 @@ def _write_manifest(state: dict, markets: list[dict], limit: int, prices: dict |
     print(f"wrote manifest -> {MANIFEST_PATH} (complete={state['complete']})")
 
 
-def _peek(markets: list[dict]) -> None:
+def _peek(stats: MarketStats) -> None:
     """Print what's actually there so a human can eyeball the shape."""
     print("\n===== WHAT'S THERE =====")
-    print(f"total closed markets collected: {len(markets)}")
-    if not markets:
+    print(f"total closed markets collected: {stats.count}")
+    if not stats.count or stats.first is None:
         return
-    first = markets[0]
+    first = stats.first
     print(f"\nfield keys on first market ({len(first)} fields):")
     for k in sorted(first):
         val = first[k]
@@ -373,11 +437,9 @@ def _peek(markets: list[dict]) -> None:
         if len(preview) > 80:
             preview = preview[:77] + "..."
         print(f"  {k}: {preview}")
-    with_prices = sum(1 for m in markets if m.get("clobTokenIds"))
-    with_rules = sum(1 for m in markets if m.get("description") or m.get("resolutionSource"))
-    print(f"\nmarkets exposing clobTokenIds (price-history capable): {with_prices}")
-    print(f"markets with description/resolutionSource text: {with_rules}")
-    print(f"rough endDate range: {_rough_time_range(markets)}")
+    print(f"\nmarkets exposing clobTokenIds (price-history capable): {stats.with_prices}")
+    print(f"markets with description/resolutionSource text: {stats.with_rules}")
+    print(f"rough endDate range: {stats.time_range()}")
 
 
 def main() -> None:
@@ -395,20 +457,21 @@ def main() -> None:
         print(f"note: --limit {args.limit} exceeds the server cap; using {PAGE_CAP}")
         args.limit = PAGE_CAP
 
-    markets, state = collect_markets(limit=args.limit, max_pages=args.max_pages,
-                                     resume=args.resume)
+    stats, state = collect_markets(limit=args.limit, max_pages=args.max_pages,
+                                   resume=args.resume,
+                                   price_samples=args.price_samples)
 
     prices = None
     try:
-        prices = sample_price_history(markets, args.price_samples)
+        prices = sample_price_history(stats.price_candidates, args.price_samples)
     except KeyboardInterrupt:
         print("\n  ! price sampling interrupted", file=sys.stderr)
     finally:
         # Written no matter how we got here, so a partial pull is never lost
         # or — worse — described by a stale manifest from an earlier run.
-        _write_manifest(state, markets, args.limit, prices)
+        _write_manifest(state, stats, args.limit, prices)
 
-    _peek(markets)
+    _peek(stats)
     print("\ndone. raw snapshots under data/raw/polymarket/ (gitignored),"
           f" manifest at {MANIFEST_PATH} (tracked).")
     if not state["complete"]:
