@@ -23,6 +23,12 @@ jobs:
     runs-on: [self-hosted, cn-sigma]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Collection is resumable and `data/` is gitignored. The default
+          # clean (`git clean -ffdx`) deletes it, so every run re-pulled the
+          # whole corpus from page 0 — and rewrote snapshots that AC2 requires
+          # to be immutable.
+          clean: false
 
       - name: Environment check
         run: |
@@ -30,7 +36,7 @@ jobs:
           python3 --version || { echo "python3 missing on runner"; exit 1; }
 
       - name: Full collect
-        run: python3 scripts/explore_polymarket.py --price-samples 25
+        run: python3 scripts/explore_polymarket.py --resume --price-samples 25
 
       - name: Extract tracked samples
         run: |
