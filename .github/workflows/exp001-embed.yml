@@ -1,0 +1,64 @@
+# CMP Sub 2 — embedding-retrieval slice on cn-sigma.
+# Encodes the clean-binary subset, retrieves semantic-only cross-event
+# candidates, emits blinded fixtures. Price-free, outcome-blind.
+# Self-installs deps to the runner user site (no dependency on box-Sigma).
+name: exp001-embed
+
+on:
+  push:
+    branches: [claude/cmp-experiment-001-issue-c1oov4]
+    paths:
+      - '.github/workflows/exp001-embed.yml'
+      - 'scripts/embed_and_retrieve.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: exp001-embed
+  cancel-in-progress: false
+
+jobs:
+  embed:
+    runs-on: [self-hosted, cn-sigma]
+    env:
+      CMP_DATA_DIR: /var/lib/cmp/data
+      OMP_NUM_THREADS: "1"
+      ORT_NUM_THREADS: "1"
+      TOKENIZERS_PARALLELISM: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Install embedding deps (user site, PEP 668)
+        run: |
+          python3 -m pip install --user --break-system-packages --quiet \
+            "numpy>=1.24" fastembed onnxruntime || \
+          python3 -m pip install --user --break-system-packages --quiet \
+            "numpy>=1.24" fastembed onnxruntime
+          python3 -c "import numpy, fastembed, onnxruntime; print('deps ok', numpy.__version__)"
+      - name: Embed + retrieve + build blinded batch
+        run: python3 scripts/embed_and_retrieve.py
+      - name: Commit fixtures
+        if: success()
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          git add -f derived/classification_input.jsonl derived/evaluation_manifest.jsonl || true
+          if git diff --cached --quiet; then
+            echo "no fixture changes"
+          else
+            git commit -m "exp001 Sub2: semantic-retrieval blinded batch (embed slice) [skip ci]"
+            git push origin HEAD:claude/cmp-experiment-001-issue-c1oov4
+          fi
+      - name: Record failure marker (so cloud wakes either way)
+        if: failure()
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          mkdir -p derived
+          printf 'exp001-embed FAILED at %s\nrun=%s\n' "$(date -u +%FT%TZ)" "${GITHUB_RUN_ID}" > derived/EMBED_FAILED.txt
+          git add -f derived/EMBED_FAILED.txt || true
+          git commit -m "exp001 Sub2: embed slice FAILED marker [skip ci]" || true
+          git push origin HEAD:claude/cmp-experiment-001-issue-c1oov4 || true
