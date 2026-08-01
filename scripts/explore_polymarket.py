@@ -4,8 +4,7 @@
 Experiment 001, Sub 1 (#2), manual exploration stage. This is NOT the hardened
 collector the #2 contract specifies (no typer CLI, no pydantic schema, no tests,
 no content-addressed store). Its only job is to *get the data* so we can eyeball
-what Polymarket actually returns. Expect this file to be thrown away / rewritten
-once we know the real field shapes.
+what Polymarket actually returns.
 
 Design choices for "run anywhere with zero setup":
   - stdlib only (urllib) — no pip install needed.
@@ -14,14 +13,37 @@ Design choices for "run anywhere with zero setup":
   - writes a small tracked manifest (counts, endpoints, per-file sha256, rough
     time range, coverage) OUTSIDE data/ so it can be committed.
 
+PAGINATION (why keyset, not offset)
+    The Gamma /markets endpoint hard-caps offset at ~2000:
+        HTTP 422 {"error":"offset too large, use /markets/keyset for deeper
+                  pagination"}
+    so offset paging can NEVER reach the full closed-market corpus. This
+    collector uses /markets/keyset with the `after_cursor` parameter, which
+    pages the whole corpus with strictly-ascending ids. Two traps this code
+    guards against, both observed live against the real API:
+      1. `limit` is silently capped at 100 per page. Advancing a cursor/offset
+         by the *requested* limit rather than the *returned* count skips
+         records (the previous version of this script advanced by 500 and so
+         collected ~20% of the corpus while reporting a complete pull).
+      2. An unrecognized cursor parameter name is *ignored*, not rejected —
+         the API cheerfully returns page 0 again. A naive loop spins forever
+         on page 0. We detect a non-advancing cursor and stop.
+
+ERROR HANDLING
+    - Retries only what is actually transient (429/5xx/network/timeout), with
+      exponential backoff + jitter, honouring Retry-After.
+    - Fails fast on non-retryable 4xx (a validation error will never succeed
+      on retry) and surfaces the response body.
+    - The manifest is ALWAYS written — on success, on error, and on Ctrl-C —
+      and records `complete: true|false` plus `stopped_reason`. A partial pull
+      is a legitimate artifact; a *silently* partial one is not.
+
 Run:
-    python3 scripts/explore_polymarket.py                 # collect closed markets
+    python3 scripts/explore_polymarket.py                 # full closed-market pull
     python3 scripts/explore_polymarket.py --max-pages 4   # quick smoke test
     python3 scripts/explore_polymarket.py --price-samples 25
 
-NOTE: requires outbound network to *.polymarket.com. In the Claude Code web
-sandbox this is blocked by the egress policy (only package registries + GitHub
-are reachable), so run it somewhere with open egress (e.g. your laptop).
+NOTE: requires outbound network to *.polymarket.com.
 """
 
 from __future__ import annotations
@@ -29,9 +51,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import random
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,73 +65,225 @@ CLOB = "https://clob.polymarket.com"
 
 RAW_DIR = Path("data/raw/polymarket")
 PRICES_DIR = RAW_DIR / "prices"
+CHECKPOINT_PATH = RAW_DIR / "_checkpoint.json"
 MANIFEST_PATH = Path("docs/experiment-001/manifest.json")  # tracked (outside data/)
 
+USER_AGENT = "cmp-exp001/0.1"
+PAGE_CAP = 100  # server-side ceiling on `limit`, regardless of what we ask for
+RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
 
-def _get(url: str, tries: int = 4, timeout: int = 40) -> bytes:
-    """GET with naive exponential backoff. Returns raw response bytes."""
-    last = None
-    for i in range(tries):
+
+class FetchError(RuntimeError):
+    """A request failed permanently (non-retryable, or retries exhausted)."""
+
+
+def _get(url: str, tries: int = 5, timeout: int = 40) -> bytes:
+    """GET with backoff. Retries transient failures only; raises FetchError otherwise."""
+    last = ""
+    for attempt in range(tries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "cmp-exp001/0.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return resp.read()
-        except (urllib.error.URLError, TimeoutError) as e:  # noqa: PERF203
-            last = e
-            wait = 2 ** i
-            print(f"  ! {url} failed ({e}); retry in {wait}s", file=sys.stderr)
-            time.sleep(wait)
-    raise SystemExit(f"giving up on {url}: {last}")
+        except urllib.error.HTTPError as e:
+            body = e.read()[:300].decode("utf-8", "replace").strip()
+            if e.code not in RETRYABLE_STATUS:
+                # 4xx validation errors never succeed on retry — fail immediately
+                # with the server's own explanation rather than burning backoff.
+                raise FetchError(f"HTTP {e.code} (non-retryable) for {url}: {body}") from e
+            last = f"HTTP {e.code}: {body}"
+            retry_after = e.headers.get("Retry-After") if e.headers else None
+            wait = float(retry_after) if (retry_after or "").isdigit() else None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last = repr(e)
+            wait = None
+
+        if attempt == tries - 1:
+            break
+        if wait is None:
+            wait = min(2**attempt, 30) + random.uniform(0, 0.5)
+        print(f"  ! {last} — retry {attempt + 1}/{tries - 1} in {wait:.1f}s", file=sys.stderr)
+        time.sleep(wait)
+
+    raise FetchError(f"giving up on {url} after {tries} attempts: {last}")
 
 
 def _sha256(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def collect_markets(limit: int, max_pages: int | None) -> list[dict]:
-    """Page through closed markets, dumping each page verbatim. Returns parsed markets."""
+def _keyset_url(limit: int, cursor: str | None) -> str:
+    params = {
+        "closed": "true",
+        "limit": str(limit),
+        "order": "id",
+        "ascending": "true",
+    }
+    if cursor:
+        params["after_cursor"] = cursor
+    return f"{GAMMA}/markets/keyset?{urllib.parse.urlencode(params)}"
+
+
+def _page_path(page: int) -> Path:
+    return RAW_DIR / f"markets_p{page:05d}.json"
+
+
+def _replay_snapshots(upto_page: int) -> tuple[list[dict], list[dict], set]:
+    """Rebuild collected state from raw snapshots already on disk.
+
+    Snapshots are immutable and page-indexed, so a resumed run reconstructs
+    exactly what a single uninterrupted run would have held in memory.
+    """
+    snapshots: list[dict] = []
+    markets: list[dict] = []
+    seen_ids: set = set()
+    for page in range(upto_page + 1):
+        path = _page_path(page)
+        if not path.exists():
+            break
+        body = path.read_bytes()
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            break
+        batch = (payload.get("markets") if isinstance(payload, dict) else payload) or []
+        snapshots.append({
+            "file": str(path), "sha256": _sha256(body),
+            "url": "(replayed from disk)", "records": len(batch),
+        })
+        for m in batch:
+            if m.get("id") not in seen_ids:
+                seen_ids.add(m.get("id"))
+                markets.append(m)
+    return snapshots, markets, seen_ids
+
+
+def _save_checkpoint(page: int, cursor: str | None, collected: int) -> None:
+    CHECKPOINT_PATH.write_text(json.dumps(
+        {"next_page": page, "cursor": cursor, "collected": collected}))
+
+
+def collect_markets(limit: int, max_pages: int | None, resume: bool = False
+                    ) -> tuple[list[dict], dict]:
+    """Page the whole closed-market corpus via keyset pagination.
+
+    Returns (markets, state) where state carries completion/stop info for the
+    manifest. Never raises for fetch failures — a partial result plus an honest
+    `stopped_reason` beats an exception that loses the pages already on disk.
+
+    A checkpoint is written after every page, so an interrupted run (SIGKILL,
+    dropped connection, closed laptop) resumes with --resume instead of
+    re-pulling hundreds of pages.
+    """
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     snapshots: list[dict] = []
     all_markets: list[dict] = []
-    offset = 0
+    seen_ids: set = set()
+
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
     page = 0
-    while True:
-        if max_pages is not None and page >= max_pages:
-            print(f"reached --max-pages={max_pages}, stopping")
-            break
-        url = (
-            f"{GAMMA}/markets?closed=true&limit={limit}&offset={offset}"
-            f"&order=id&ascending=true"
-        )
-        print(f"page {page} offset={offset} -> {url}")
-        body = _get(url)
-        out = RAW_DIR / f"markets_off{offset:07d}.json"
-        out.write_bytes(body)  # immutable raw snapshot, exactly as returned
-        snapshots.append({"file": str(out), "sha256": _sha256(body), "url": url})
+    duplicates = 0
+    complete = False
+    reason = "unknown"
 
-        try:
-            batch = json.loads(body)
-        except json.JSONDecodeError as e:
-            raise SystemExit(f"non-JSON response at offset {offset}: {e}")
-        if isinstance(batch, dict):  # some endpoints wrap in {"data": [...]}
-            batch = batch.get("data") or batch.get("markets") or []
-        if not batch:
-            print("empty page, reached end of closed markets")
-            break
-        all_markets.extend(batch)
-        offset += limit
-        page += 1
+    if resume and CHECKPOINT_PATH.exists():
+        ck = json.loads(CHECKPOINT_PATH.read_text())
+        page, cursor = ck["next_page"], ck["cursor"]
+        snapshots, all_markets, seen_ids = _replay_snapshots(page - 1)
+        print(f"resuming at page {page} with {len(all_markets)} markets replayed from disk")
+        if cursor:
+            seen_cursors.add(cursor)
 
-    _write_manifest(snapshots, all_markets, limit)
-    return all_markets
+    try:
+        while True:
+            if max_pages is not None and page >= max_pages:
+                reason = f"reached --max-pages={max_pages}"
+                print(reason)
+                break
+
+            url = _keyset_url(limit, cursor)
+            body = _get(url)
+
+            out = _page_path(page)
+            out.write_bytes(body)  # immutable raw snapshot, exactly as returned
+
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError as e:
+                reason = f"non-JSON response on page {page}: {e}"
+                print(f"  ! {reason}", file=sys.stderr)
+                break
+
+            batch = payload.get("markets") if isinstance(payload, dict) else payload
+            batch = batch or []
+            next_cursor = payload.get("next_cursor") if isinstance(payload, dict) else None
+
+            snapshots.append({
+                "file": str(out),
+                "sha256": _sha256(body),
+                "url": url,
+                "records": len(batch),
+            })
+
+            # Trap 2: an ignored/echoed cursor silently re-serves the same page.
+            new = [m for m in batch if m.get("id") not in seen_ids]
+            duplicates += len(batch) - len(new)
+            for m in new:
+                seen_ids.add(m.get("id"))
+            all_markets.extend(new)
+
+            print(f"page {page} n={len(batch)} new={len(new)} total={len(all_markets)}")
+
+            if not batch:
+                complete, reason = True, "empty page — end of closed markets"
+                print(reason)
+                break
+            if not next_cursor:
+                complete, reason = True, "no next_cursor — end of closed markets"
+                print(reason)
+                break
+            if not new:
+                reason = f"cursor stopped advancing at page {page} (all ids already seen)"
+                print(f"  ! {reason}", file=sys.stderr)
+                break
+            if next_cursor in seen_cursors:
+                reason = f"cursor repeated at page {page} — refusing to loop"
+                print(f"  ! {reason}", file=sys.stderr)
+                break
+
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+            page += 1
+            # Checkpoint AFTER the page is durably on disk, so a resume never
+            # skips a page it only partially wrote.
+            _save_checkpoint(page, cursor, len(all_markets))
+
+    except FetchError as e:
+        reason = f"fetch failed: {e}"
+        print(f"  ! {reason}", file=sys.stderr)
+    except KeyboardInterrupt:
+        reason = "interrupted by user (Ctrl-C)"
+        print(f"\n  ! {reason}", file=sys.stderr)
+
+    state = {
+        "complete": complete,
+        "stopped_reason": reason,
+        "pages_fetched": len(snapshots),
+        "duplicate_records_skipped": duplicates,
+        "snapshots": snapshots,
+    }
+    return all_markets, state
 
 
-def sample_price_history(markets: list[dict], n: int) -> None:
+def sample_price_history(markets: list[dict], n: int) -> dict:
     """Grab price history for the first n markets that expose CLOB token ids."""
+    result = {"requested": n, "collected": 0, "failed": 0}
     if n <= 0:
-        return
+        return result
     PRICES_DIR.mkdir(parents=True, exist_ok=True)
     got = 0
+    failed = 0
     for m in markets:
         if got >= n:
             break
@@ -123,14 +299,19 @@ def sample_price_history(markets: list[dict], n: int) -> None:
         token = token_ids[0]
         url = f"{CLOB}/prices-history?market={token}&interval=max&fidelity=60"
         try:
-            body = _get(url, tries=2)
-        except SystemExit:
+            body = _get(url, tries=3)
+        except FetchError as e:
+            # One market's missing history must not abort the sample.
+            failed += 1
+            print(f"  ! price history failed for market {m.get('id')}: {e}", file=sys.stderr)
             continue
         mid = m.get("id", "unknown")
         (PRICES_DIR / f"{mid}_{token}.json").write_bytes(body)
         got += 1
         print(f"  price history {got}/{n}: market {mid}")
-    print(f"sampled price history for {got} markets")
+    print(f"sampled price history for {got} markets ({failed} failed)")
+    result.update(collected=got, failed=failed)
+    return result
 
 
 def _rough_time_range(markets: list[dict]) -> dict:
@@ -145,26 +326,37 @@ def _rough_time_range(markets: list[dict]) -> dict:
             "latest_endDate": ends[-1] if ends else None}
 
 
-def _write_manifest(snapshots: list[dict], markets: list[dict], limit: int) -> None:
+def _write_manifest(state: dict, markets: list[dict], limit: int, prices: dict | None) -> None:
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     manifest = {
         "experiment": "001",
         "stage": "exploratory-collection (Sub 1 / #2) — NOT hardened",
         "collected_at_utc": datetime.now(timezone.utc).isoformat(),
-        "source_endpoints": [f"{GAMMA}/markets?closed=true", f"{CLOB}/prices-history"],
-        "page_limit": limit,
+        "source_endpoints": [
+            f"{GAMMA}/markets/keyset?closed=true (after_cursor pagination)",
+            f"{CLOB}/prices-history",
+        ],
+        "pagination": "keyset/after_cursor",
+        "page_limit_requested": limit,
+        "page_limit_server_cap": PAGE_CAP,
+        "complete": state["complete"],
+        "stopped_reason": state["stopped_reason"],
+        "pages_fetched": state["pages_fetched"],
         "total_markets": len(markets),
+        "duplicate_records_skipped": state["duplicate_records_skipped"],
+        "price_history": prices,
         "time_range": _rough_time_range(markets),
-        "snapshots": snapshots,
+        "snapshots": state["snapshots"],
         "coverage_note": (
             "Exploratory pull of closed Polymarket markets via the public Gamma "
-            "API. Coverage is whatever the API paged out in this run; verify the "
-            "count against the ≥5,000 / full-coverage requirement in #2 before "
-            "treating this as the corpus."
+            "keyset API. `complete` reflects whether pagination reached a natural "
+            "end; if false, `stopped_reason` says where it stopped and the corpus "
+            "is a prefix, not a sample. Verify total_markets against the >=5,000 / "
+            "full-coverage requirement in #2 before treating this as the corpus."
         ),
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
-    print(f"wrote manifest -> {MANIFEST_PATH}")
+    print(f"wrote manifest -> {MANIFEST_PATH} (complete={state['complete']})")
 
 
 def _peek(markets: list[dict]) -> None:
@@ -190,17 +382,38 @@ def _peek(markets: list[dict]) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Exploratory Polymarket closed-market collector.")
-    ap.add_argument("--limit", type=int, default=500, help="page size (Gamma max ~500)")
+    ap.add_argument("--limit", type=int, default=PAGE_CAP,
+                    help=f"page size (server caps at {PAGE_CAP})")
     ap.add_argument("--max-pages", type=int, default=None, help="cap pages (smoke test)")
     ap.add_argument("--price-samples", type=int, default=10,
                     help="how many markets to pull price history for (0 to skip)")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue from the last checkpoint instead of restarting")
     args = ap.parse_args()
 
-    markets = collect_markets(limit=args.limit, max_pages=args.max_pages)
-    sample_price_history(markets, args.price_samples)
+    if args.limit > PAGE_CAP:
+        print(f"note: --limit {args.limit} exceeds the server cap; using {PAGE_CAP}")
+        args.limit = PAGE_CAP
+
+    markets, state = collect_markets(limit=args.limit, max_pages=args.max_pages,
+                                     resume=args.resume)
+
+    prices = None
+    try:
+        prices = sample_price_history(markets, args.price_samples)
+    except KeyboardInterrupt:
+        print("\n  ! price sampling interrupted", file=sys.stderr)
+    finally:
+        # Written no matter how we got here, so a partial pull is never lost
+        # or — worse — described by a stale manifest from an earlier run.
+        _write_manifest(state, markets, args.limit, prices)
+
     _peek(markets)
     print("\ndone. raw snapshots under data/raw/polymarket/ (gitignored),"
           f" manifest at {MANIFEST_PATH} (tracked).")
+    if not state["complete"]:
+        print(f"WARNING: pull is INCOMPLETE — {state['stopped_reason']}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
