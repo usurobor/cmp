@@ -41,7 +41,7 @@ jobs:
           python3 --version || { echo "python3 missing on runner"; exit 1; }
 
       - name: Full collect
-        run: python3 scripts/explore_polymarket.py --resume --price-samples 25
+        run: python3 scripts/explore_polymarket.py --resume --min-volume 10000 --price-samples 25
 
       - name: Extract tracked samples
         run: |

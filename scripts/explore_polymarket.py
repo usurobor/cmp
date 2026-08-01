@@ -121,13 +121,38 @@ def _sha256(b: bytes) -> str:
     return hashlib.sha256(b).hexdigest()
 
 
-def _keyset_url(limit: int, cursor: str | None) -> str:
+def _configure_paths(min_volume: float) -> None:
+    """Bind corpus paths to the volume floor this run collects at.
+
+    A filtered corpus and an unfiltered one are different universes. Writing
+    both into one directory would interleave pages whose coverage claims
+    differ, making the manifest unverifiable — page 5 might be "all closed
+    markets" and page 6 "closed markets above $10k". Each floor therefore gets
+    its own tree and its own checkpoint, so resume can never cross universes.
+    """
+    global RAW_DIR, PRICES_DIR, CHECKPOINT_PATH
+    suffix = "" if min_volume <= 0 else f"-vol{int(min_volume)}"
+    RAW_DIR = DATA_DIR / "raw" / f"polymarket{suffix}"
+    PRICES_DIR = RAW_DIR / "prices"
+    CHECKPOINT_PATH = RAW_DIR / "_checkpoint.json"
+
+
+def _keyset_url(limit: int, cursor: str | None, min_volume: float = 0.0) -> str:
     params = {
         "closed": "true",
         "limit": str(limit),
         "order": "id",
         "ascending": "true",
     }
+    if min_volume > 0:
+        # Server-side floor. Verified honored on this endpoint: an unfiltered
+        # control page returned records below the floor, the filtered page
+        # returned none, and cursor paging stayed strictly id-ascending with no
+        # repeats. Note `volume_min` is silently IGNORED by the API — only
+        # `volume_num_min` filters. Filtering here rather than after download
+        # cuts the fetch ~5.5x: 19,540 unfiltered pages yielded the same liquid
+        # set that ~3,600 filtered pages carry.
+        params["volume_num_min"] = str(int(min_volume))
     if cursor:
         params["after_cursor"] = cursor
     return f"{GAMMA}/markets/keyset?{urllib.parse.urlencode(params)}"
@@ -241,7 +266,8 @@ def _save_checkpoint(page: int, cursor: str | None, collected: int) -> None:
 
 
 def collect_markets(limit: int, max_pages: int | None, resume: bool = False,
-                    price_samples: int = 0) -> tuple[MarketStats, dict]:
+                    price_samples: int = 0, min_volume: float = 0.0
+                    ) -> tuple[MarketStats, dict]:
     """Page the whole closed-market corpus via keyset pagination.
 
     Returns (stats, state) where stats is a streaming aggregate and state
@@ -283,7 +309,7 @@ def collect_markets(limit: int, max_pages: int | None, resume: bool = False,
                 print(reason)
                 break
 
-            url = _keyset_url(limit, cursor)
+            url = _keyset_url(limit, cursor, min_volume)
             body = _get(url)
 
             out = _page_path(page)
@@ -355,6 +381,7 @@ def collect_markets(limit: int, max_pages: int | None, resume: bool = False,
     state = {
         "complete": complete,
         "stopped_reason": reason,
+        "min_volume": min_volume,
         "pages_fetched": len(snapshots),
         "duplicate_records_skipped": duplicates,
         "snapshots": snapshots,
@@ -399,6 +426,35 @@ def sample_price_history(candidates: list[dict], n: int) -> dict:
     return result
 
 
+def _coverage_statement(state: dict, stats: MarketStats) -> dict:
+    """State the collected universe explicitly, per AC4.
+
+    Two distinct claims are possible and they must not be conflated: full
+    coverage of every closed market, or full coverage of the sub-universe above
+    a declared volume floor. A floor is a deliberate scope narrowing, not an API
+    limitation, so it is recorded as `universe` rather than smuggled in as a
+    `reason` for falling short.
+    """
+    floor = state.get("min_volume", 0.0) or 0.0
+    universe = ("all closed markets" if floor <= 0 else
+                f"closed markets with cumulative volume >= ${floor:,.0f}")
+    return {
+        "universe": universe,
+        "pagination_reached_end": state["complete"],
+        "total_markets": stats.count,
+        "meets_5000_threshold": stats.count >= 5000,
+        "limitation": None if state["complete"] else state["stopped_reason"],
+        "statement": (
+            f"Full public-API coverage of {universe}: pagination reached a "
+            f"natural end after {stats.count:,} markets."
+            if state["complete"] else
+            f"PARTIAL coverage of {universe}: {stats.count:,} markets collected; "
+            f"pagination stopped early ({state['stopped_reason']}). The corpus is "
+            f"a prefix ordered by market id, not a sample."
+        ),
+    }
+
+
 def _write_manifest(state: dict, stats: MarketStats, limit: int, prices: dict | None) -> None:
     MANIFEST_PATH.parent.mkdir(parents=True, exist_ok=True)
     manifest = {
@@ -419,6 +475,8 @@ def _write_manifest(state: dict, stats: MarketStats, limit: int, prices: dict | 
         "duplicate_records_skipped": state["duplicate_records_skipped"],
         "price_history": prices,
         "time_range": stats.time_range(),
+        "volume_floor_usd": state.get("min_volume", 0.0) or None,
+        "coverage": _coverage_statement(state, stats),
         "snapshots": state["snapshots"],
         "coverage_note": (
             "Exploratory pull of closed Polymarket markets via the public Gamma "
@@ -458,6 +516,12 @@ def main() -> None:
     ap.add_argument("--max-pages", type=int, default=None, help="cap pages (smoke test)")
     ap.add_argument("--price-samples", type=int, default=10,
                     help="how many markets to pull price history for (0 to skip)")
+    ap.add_argument("--min-volume", type=float, default=0.0,
+                    help="server-side floor on cumulative volume (USD). 0 = no "
+                         "filter. Settled markets have no book, so `liquidity` "
+                         "is absent or ~0 for ~99%% of them; volume is the "
+                         "usable liquidity proxy. Each floor gets its own "
+                         "corpus tree.")
     ap.add_argument("--resume", action="store_true",
                     help="continue from the last checkpoint instead of restarting")
     args = ap.parse_args()
@@ -466,9 +530,14 @@ def main() -> None:
         print(f"note: --limit {args.limit} exceeds the server cap; using {PAGE_CAP}")
         args.limit = PAGE_CAP
 
+    _configure_paths(args.min_volume)
+    if args.min_volume > 0:
+        print(f"volume floor: ${args.min_volume:,.0f} (server-side) -> {RAW_DIR}")
+
     stats, state = collect_markets(limit=args.limit, max_pages=args.max_pages,
                                    resume=args.resume,
-                                   price_samples=args.price_samples)
+                                   price_samples=args.price_samples,
+                                   min_volume=args.min_volume)
 
     prices = None
     try:
