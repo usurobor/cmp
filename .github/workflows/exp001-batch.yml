@@ -28,9 +28,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: false
-      - name: Generate candidate pairs
-        run: python3 scripts/gen_candidate_pairs.py
-      - name: Build blinded stratified batch
+      # NOTE: gen_candidate_pairs is intentionally NOT run here — it materializes
+      # millions of candidate pairs in RAM (OOM risk, same failure mode as the
+      # collector). build_review_batch is self-contained and memory-bounded.
+      - name: Build blinded stratified batch (bounded memory)
         run: python3 scripts/build_review_batch.py
       - name: Commit fixtures
         run: |
