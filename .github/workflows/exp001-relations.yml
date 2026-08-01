@@ -1,0 +1,26 @@
+# CMP relation discovery — mechanical candidate-pair generation on cn-sigma
+# against the liquid corpus. Price-free; the real CMP direction (text -> relations).
+# Throwaway egress wrapper like the other exp001 workflows.
+name: exp001-relations
+
+on:
+  push:
+    branches: [claude/cmp-experiment-001-issue-c1oov4]
+    paths: ['.github/workflows/exp001-relations.yml', 'scripts/gen_candidate_pairs.py']
+  workflow_dispatch:
+
+concurrency:
+  group: exp001-relations
+  cancel-in-progress: false
+
+jobs:
+  relations:
+    runs-on: [self-hosted, cn-sigma]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Generate candidate pairs
+        env:
+          CMP_DATA_DIR: /var/lib/cmp/data
+        run: python3 scripts/gen_candidate_pairs.py
