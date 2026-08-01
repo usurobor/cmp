@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""probe_baskets.py — tradeable-signal probe for Experiment 001 (lean v2).
+"""probe_baskets.py — tradeable-signal probe for Experiment 001 (v3, honest).
 
-Two questions, answered in order:
+Two questions:
+  Q1 data adequacy: does CLOB serve usable pre-settlement daily history? Sampled
+      across volume+date up front.
+  Q2 signal: among liquid multi-outcome events, is there a *buy-the-basket* lock
+      -- a day where the mutually-exclusive outcomes' YES prices sum BELOW 1 with
+      full coverage. Buy all legs for `sum`, exactly one settles to 1.0, lock
+      `1 - sum` (minus fees). That is the clean, directly tradeable direction.
+      `sum > 1` is reported too but de-emphasized: for negRisk markets it is
+      mostly the structural over-round, not free money.
 
-  Q1 (data adequacy): does CLOB actually serve usable pre-settlement price
-      history for these settled markets? Sampled up front across the volume
-      range AND the date range (old vs recent), reported before anything else.
-      A basket check is impossible without history — so this gates the rest.
+Two correctness rules that killed v2's inflated numbers:
+  - COVERAGE: only compute a basket sum for a day when EVERY outcome of the event
+    has a price that day. A partial basket understates the sum -> false buy arb.
+  - SUSTAINED: report the daily sum *distribution* (min / median / max / #days),
+    not the single most extreme day. A one-day spike in thin early trading is not
+    tradeable; a sustained sub-1 basket is.
 
-  Q2 (signal): among liquid multi-outcome events, do the outcome YES prices sum
-      far enough from 1.0, pre-settlement, to be a candidate mispricing? Group
-      by event (mechanical join, no classifier), sum each basket's daily YES
-      histories, flag deviation >= threshold. Candidate historical incoherence
-      only — NOT proven executable arbitrage (layer 4, out of scope).
-
-Corpus source (in priority order; the huge unfiltered census is never scanned):
-  1. $CMP_DATA_DIR/derived/liquid_volume_ge_10000.jsonl  (one market per line)
-  2. $CMP_DATA_DIR/raw/polymarket-vol*/markets_p*.json    (a filtered pull)
-
-Env: CMP_DATA_DIR (default /var/lib/cmp/data)
+Corpus: $CMP_DATA_DIR/derived/liquid_volume_ge_10000.jsonl (never the census).
+Report: ./exp001_basket_report.json in the workspace (not /var/lib -- perms).
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import statistics
 import sys
 import time
 import urllib.error
@@ -35,13 +37,14 @@ from datetime import datetime, timezone
 
 CLOB = "https://clob.polymarket.com"
 DATA_DIR = os.environ.get("CMP_DATA_DIR", "/var/lib/cmp/data")
-DERIVED = os.path.join(DATA_DIR, "derived")
-JSONL = os.path.join(DERIVED, "liquid_volume_ge_10000.jsonl")
+JSONL = os.path.join(DATA_DIR, "derived", "liquid_volume_ge_10000.jsonl")
+REPORT = os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "exp001_basket_report.json")
 
-TOP_GROUPS = int(os.environ.get("PROBE_TOP_GROUPS", "40"))
-DEV_THRESHOLD = float(os.environ.get("PROBE_DEV", "0.05"))
-MAX_CLOB_CALLS = int(os.environ.get("PROBE_MAX_CLOB", "250"))
-AVAIL_SAMPLE = int(os.environ.get("PROBE_AVAIL", "18"))
+TOP_GROUPS = int(os.environ.get("PROBE_TOP_GROUPS", "120"))
+BUY_LOCK = float(os.environ.get("PROBE_BUY_LOCK", "0.03"))   # min lock to flag: sum <= 1-0.03
+MIN_DAYS = int(os.environ.get("PROBE_MIN_DAYS", "3"))        # sustained: >= this many days
+MAX_CLOB_CALLS = int(os.environ.get("PROBE_MAX_CLOB", "600"))
+AVAIL_SAMPLE = int(os.environ.get("PROBE_AVAIL", "12"))
 
 
 def _f(x) -> float:
@@ -72,54 +75,29 @@ def _event_key(m: dict):
     return None
 
 
-def _minimal(m: dict) -> dict | None:
+def _minimal(m: dict):
     toks = _plist(m.get("clobTokenIds"))
     if not toks:
         return None
-    return {
-        "id": m.get("id"),
-        "q": m.get("question") or m.get("groupItemTitle") or "",
-        "yes_token": toks[0],
-        "vol": _f(m.get("volumeNum") or m.get("volume")),
-        "event": _event_key(m),
-        "endDate": (m.get("endDate") or "")[:10],
-        "negRisk": m.get("negRisk"),
-    }
+    return {"id": m.get("id"), "q": m.get("question") or m.get("groupItemTitle") or "",
+            "yes_token": toks[0], "vol": _f(m.get("volumeNum") or m.get("volume")),
+            "event": _event_key(m), "endDate": (m.get("endDate") or "")[:10],
+            "negRisk": m.get("negRisk")}
 
 
-def load_liquid() -> tuple[list[dict], list | None]:
-    """Return (minimal market records, sample_keys). Never scans the census."""
+def load_liquid():
+    if not os.path.exists(JSONL):
+        sys.exit(f"no liquid corpus at {JSONL} (refusing to scan census)")
     recs, keys = [], None
-    if os.path.exists(JSONL):
-        print(f"corpus: {JSONL}")
-        with open(JSONL) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    m = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if keys is None:
-                    keys = sorted(m.keys())
-                r = _minimal(m)
-                if r:
-                    recs.append(r)
-        return recs, keys
-
-    pages = sorted(glob.glob(os.path.join(DATA_DIR, "raw", "polymarket-vol*",
-                                          "markets_p*.json")))
-    if not pages:
-        sys.exit(f"no liquid corpus found: neither {JSONL} nor raw/polymarket-vol*/ "
-                 f"exists under {DATA_DIR}. (Refusing to scan the full census.)")
-    print(f"corpus: {len(pages)} filtered pages under {DATA_DIR}/raw/polymarket-vol*")
-    for p in pages:
-        try:
-            payload = json.load(open(p))
-        except (json.JSONDecodeError, OSError):
-            continue
-        for m in (payload.get("markets") if isinstance(payload, dict) else payload) or []:
+    with open(JSONL) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                m = json.loads(line)
+            except json.JSONDecodeError:
+                continue
             if keys is None:
                 keys = sorted(m.keys())
             r = _minimal(m)
@@ -128,10 +106,10 @@ def load_liquid() -> tuple[list[dict], list | None]:
     return recs, keys
 
 
-def _get_json(url: str, tries: int = 3):
+def _get_json(url, tries=3):
     for i in range(tries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "cmp-probe/0.2"})
+            req = urllib.request.Request(url, headers={"User-Agent": "cmp-probe/0.3"})
             with urllib.request.urlopen(req, timeout=40) as r:
                 return json.loads(r.read())
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
@@ -141,125 +119,98 @@ def _get_json(url: str, tries: int = 3):
     return None
 
 
-def history(token: str) -> list:
+def daily(token: str) -> dict:
     js = _get_json(f"{CLOB}/prices-history?market={token}&interval=max&fidelity=1440")
     if not js:
-        return []
+        return {}
     h = js.get("history") if isinstance(js, dict) else js
-    return h or []
-
-
-def _daily(hist: list) -> dict:
     out = {}
-    for pt in hist:
+    for pt in h or []:
         t, p = pt.get("t"), pt.get("p")
-        if t is None or p is None:
-            continue
-        out[datetime.fromtimestamp(int(t), timezone.utc).strftime("%Y-%m-%d")] = float(p)
+        if t is not None and p is not None:
+            out[datetime.fromtimestamp(int(t), timezone.utc).strftime("%Y-%m-%d")] = float(p)
     return out
 
 
-def availability(recs: list[dict]) -> bool:
-    """Sample across volume AND date; report CLOB coverage. Returns True if usable."""
-    print("\n===== Q1: CLOB PRICE-HISTORY AVAILABILITY =====")
+def availability(recs):
+    print("\n===== Q1: CLOB HISTORY AVAILABILITY =====")
     by_vol = sorted(recs, key=lambda r: r["vol"], reverse=True)
-    dated = [r for r in recs if r["endDate"]]
-    by_date = sorted(dated, key=lambda r: r["endDate"])
+    dated = sorted((r for r in recs if r["endDate"]), key=lambda r: r["endDate"])
     picks, seen = [], set()
-    # top volume, oldest, newest, and a volume-spread middle
-    cand = by_vol[:6] + by_date[:4] + by_date[-4:] + by_vol[len(by_vol)//2:len(by_vol)//2+4]
-    for r in cand:
+    for r in by_vol[:5] + dated[:4] + dated[-4:]:
         if r["id"] not in seen:
             seen.add(r["id"]); picks.append(r)
-        if len(picks) >= AVAIL_SAMPLE:
-            break
     usable = 0
-    for r in picks:
-        h = _daily(history(r["yes_token"]))
+    for r in picks[:AVAIL_SAMPLE]:
+        h = daily(r["yes_token"])
         if h:
-            days = sorted(h)
-            span = f"{days[0]}..{days[-1]}"
-            n = len(h)
-            if n >= 5:
-                usable += 1
-            print(f"  n={n:<5} span={span}  end={r['endDate']}  vol=${r['vol']:,.0f}  "
-                  f":: {r['q'][:50]}")
+            d = sorted(h); usable += 1
+            print(f"  n={len(h):<4} {d[0]}..{d[-1]}  end={r['endDate']}  :: {r['q'][:45]}")
         else:
-            print(f"  n=0     NO HISTORY            end={r['endDate']}  vol=${r['vol']:,.0f}  "
-                  f":: {r['q'][:50]}")
-    print(f"\nusable (>=5 daily points): {usable}/{len(picks)} sampled")
-    verdict = usable >= max(3, len(picks) // 3)
-    print("VERDICT: " + ("history is available — basket check is viable"
-                         if verdict else
-                         "history is thin/absent — basket check NOT viable from CLOB"))
-    return verdict
+            print(f"  n=0   NO HISTORY          end={r['endDate']}  :: {r['q'][:45]}")
+    print(f"usable: {usable}/{min(len(picks),AVAIL_SAMPLE)}")
+    return usable >= 3
 
 
-def baskets(recs: list[dict]) -> None:
+def baskets(recs):
     groups = defaultdict(list)
     for r in recs:
         if r["event"] is not None:
             groups[r["event"]].append(r)
-    multi = [(k, v) for k, v in groups.items() if len(v) >= 2]
-    multi.sort(key=lambda kv: sum(m["vol"] for m in kv[1]), reverse=True)
-    print(f"\n===== Q2: BASKET SUMS =====")
-    print(f"events with >=2 outcomes: {len(multi)} (of {len(groups)}). "
-          f"probing top {min(TOP_GROUPS, len(multi))} by volume.")
-    if not multi:
-        print("no multi-outcome groups — event grouping field may be missing; "
-              "see schema keys above.")
-        return
+    multi = sorted(((k, v) for k, v in groups.items() if len(v) >= 2),
+                   key=lambda kv: sum(m["vol"] for m in kv[1]), reverse=True)
+    print(f"\n===== Q2: BUY-THE-BASKET (sum < 1, full coverage) =====")
+    print(f"multi-outcome events: {len(multi)}. probing top {min(TOP_GROUPS,len(multi))} by volume.")
 
-    flagged, calls = [], 0
+    buys, calls, complete = [], 0, 0
     for ek, members in multi[:TOP_GROUPS]:
         if calls >= MAX_CLOB_CALLS:
-            print("hit CLOB call cap, stopping.")
-            break
+            print("hit CLOB call cap."); break
         calls += len(members)
-        series = {}
-        for mem in members:
-            d = _daily(history(mem["yes_token"]))
-            if d:
-                series[mem["id"]] = d
-        if len(series) < 2:
+        series = {m["id"]: daily(m["yes_token"]) for m in members}
+        series = {k: v for k, v in series.items() if v}
+        # COVERAGE RULE: need every outcome, else the sum is understated.
+        if len(series) < len(members):
             continue
-        common = set.intersection(*(set(d) for d in series.values()))
-        if not common:
+        complete += 1
+        common = set.intersection(*(set(v) for v in series.values()))
+        if len(common) < MIN_DAYS:
             continue
-        best = max(((day, sum(series[i][day] for i in series)) for day in common),
-                   key=lambda ds: abs(ds[1] - 1.0))
-        dev = abs(best[1] - 1.0)
+        sums = sorted((sum(series[i][day] for i in series), day) for day in common)
+        vals = [s for s, _ in sums]
+        smin, smed, smax = vals[0], statistics.median(vals), vals[-1]
+        buy_days = [(s, d) for s, d in sums if s <= 1 - BUY_LOCK]
         gv = sum(m["vol"] for m in members)
-        mark = "FLAG" if dev >= DEV_THRESHOLD else "ok  "
-        print(f"[{mark}] dev={dev:.3f} sum={best[1]:.3f} n={len(series)} "
-              f"vol=${gv:,.0f} day={best[0]} :: {members[0]['q'][:60]}")
-        if dev >= DEV_THRESHOLD:
-            flagged.append({"event": ek, "dev": round(dev, 4), "sum": round(best[1], 4),
-                            "day": best[0], "n": len(series), "vol": round(gv, 2),
-                            "questions": [m["q"] for m in members][:8]})
+        if len(buy_days) >= MIN_DAYS:
+            best = buy_days[0]  # deepest lock (lowest sum)
+            lock = round(1 - best[0], 4)
+            buys.append({"event": ek, "n_outcomes": len(members), "vol": round(gv, 0),
+                         "min_sum": round(smin, 4), "median_sum": round(smed, 4),
+                         "lock": lock, "buy_days": len(buy_days), "total_days": len(common),
+                         "best_day": best[1], "q": members[0]["q"][:70],
+                         "negRisk": members[0].get("negRisk")})
+            print(f"  [BUY] lock={lock:.1%} min={smin:.3f} med={smed:.3f} "
+                  f"buy_days={len(buy_days)}/{len(common)} n={len(members)} "
+                  f"vol=${gv:,.0f} :: {members[0]['q'][:55]}")
 
-    flagged.sort(key=lambda r: r["dev"], reverse=True)
-    os.makedirs(DERIVED, exist_ok=True)
-    json.dump(flagged, open(os.path.join(DERIVED, "basket_probe.json"), "w"), indent=2)
+    buys.sort(key=lambda r: r["lock"] * r["vol"], reverse=True)
+    json.dump({"complete_baskets": complete, "buy_candidates": buys},
+              open(REPORT, "w"), indent=2)
     print(f"\n===== SIGNAL =====")
-    print(f"flagged baskets (dev >= {DEV_THRESHOLD:.0%}): {len(flagged)}")
-    for r in flagged[:15]:
-        print(f"  dev={r['dev']:.3f} sum={r['sum']} vol=${r['vol']:,.0f} "
-              f"day={r['day']} :: {r['questions'][0][:55]}")
-    print("NOTE: candidate historical incoherence, NOT executable arbitrage.")
+    print(f"full-coverage baskets checked: {complete}")
+    print(f"buy-the-basket candidates (sum<= {1-BUY_LOCK}, >={MIN_DAYS} days): {len(buys)}")
+    for r in buys[:20]:
+        print(f"  lock={r['lock']:.1%} med_sum={r['median_sum']} days={r['buy_days']}/{r['total_days']} "
+              f"vol=${r['vol']:,.0f} :: {r['q'][:50]}")
+    print(f"\nreport -> {REPORT}")
+    print("NOTE: candidate historical lock ignoring fees, depth, and fill. NOT proven executable.")
 
 
-def main() -> None:
+def main():
     recs, keys = load_liquid()
-    print(f"liquid markets loaded: {len(recs)}")
-    print(f"schema keys: {keys}")
-    if not recs:
-        sys.exit("no usable market records")
-    ok = availability(recs)
-    if not ok:
-        print("\nStopping before baskets: without price history the sum check is "
-              "meaningless. Next: target recently-settled events or another source.")
-        return
+    print(f"liquid markets: {len(recs)} | schema keys: {keys}")
+    if not availability(recs):
+        print("\nhistory thin -> stop before baskets."); return
     baskets(recs)
 
 
