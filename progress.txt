@@ -1,0 +1,1 @@
+run 30714258514: [2] model ready (1s), dim=384, encoding 60000 texts
