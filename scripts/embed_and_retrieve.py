@@ -47,7 +47,12 @@ import numpy as np
 
 DATA_DIR = os.environ.get("CMP_DATA_DIR", "/var/lib/cmp/data")
 JSONL = os.path.join(DATA_DIR, "derived", "liquid_volume_ge_10000.jsonl")
-EMB_DIR = os.path.join(DATA_DIR, "derived", "embeddings")
+# EMB_DIR must be RUNNER-WRITABLE: /var/lib/cmp/data is box-owned and the runner
+# can read the corpus there but cannot mkdir under it (PermissionError). Default
+# to a workspace cache — with checkout clean:false it survives between runs, so
+# the idempotent encode-skip still works.
+EMB_DIR = os.environ.get("EMB_DIR") or os.path.join(
+    os.environ.get("GITHUB_WORKSPACE", "."), ".embcache")
 CB = os.path.join(EMB_DIR, "cb.jsonl")
 F32 = os.path.join(EMB_DIR, "cb.f32")
 IDS = os.path.join(EMB_DIR, "ids.npy")

@@ -42,23 +42,39 @@ jobs:
         run: python3 scripts/embed_and_retrieve.py
       - name: Commit fixtures
         if: success()
+        env:
+          BRANCH: claude/cmp-experiment-001-issue-c1oov4
         run: |
           git config user.name "cn-sigma-runner"
           git config user.email "runner@cn-sigma"
           git add -f derived/classification_input.jsonl derived/evaluation_manifest.jsonl || true
           if git diff --cached --quiet; then
-            echo "no fixture changes"
-          else
-            git commit -m "exp001 Sub2: semantic-retrieval blinded batch (embed slice) [skip ci]"
-            git push origin HEAD:claude/cmp-experiment-001-issue-c1oov4
+            echo "no fixture changes"; exit 0
           fi
+          git commit -m "exp001 Sub2: semantic-retrieval blinded batch (embed slice) [skip ci]"
+          # rebase onto the current remote tip so the push fast-forwards even if
+          # the branch advanced while this run was queued/running.
+          for i in 1 2 3 4 5; do
+            git fetch origin "$BRANCH" && git rebase "origin/$BRANCH" && \
+              git push origin "HEAD:$BRANCH" && exit 0
+            echo "push retry $i"; git rebase --abort 2>/dev/null || true; sleep 3
+          done
+          echo "failed to push fixtures after retries"; exit 1
       - name: Record failure marker (so cloud wakes either way)
         if: failure()
+        env:
+          BRANCH: claude/cmp-experiment-001-issue-c1oov4
         run: |
           git config user.name "cn-sigma-runner"
           git config user.email "runner@cn-sigma"
+          # base the marker on the current remote tip so the push fast-forwards
+          git fetch origin "$BRANCH" || true
+          git checkout -B "$BRANCH" "origin/$BRANCH" || true
           mkdir -p derived
           printf 'exp001-embed FAILED at %s\nrun=%s\n' "$(date -u +%FT%TZ)" "${GITHUB_RUN_ID}" > derived/EMBED_FAILED.txt
           git add -f derived/EMBED_FAILED.txt || true
           git commit -m "exp001 Sub2: embed slice FAILED marker [skip ci]" || true
-          git push origin HEAD:claude/cmp-experiment-001-issue-c1oov4 || true
+          for i in 1 2 3; do
+            git push origin "HEAD:$BRANCH" && break
+            git fetch origin "$BRANCH" || true; git rebase "origin/$BRANCH" 2>/dev/null || git rebase --abort 2>/dev/null || true; sleep 3
+          done
