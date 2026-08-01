@@ -66,7 +66,11 @@ MANIFEST = os.path.join(OUT_DIR, "evaluation_manifest.jsonl")
 MODEL_NAME = os.environ.get("EMB_MODEL", "BAAI/bge-small-en-v1.5")
 DIM = 384
 SEED = int(os.environ.get("BATCH_SEED", "20260801"))
-BATCH = int(os.environ.get("ENC_BATCH", "256"))
+# ENC_BATCH: onnxruntime attention tensors are batch x heads x seq^2 and the ORT
+# arena retains the peak — at 256 this alone pushed RSS to 1.3 GB and swapped the
+# 2 GB box (box-Sigma's diagnosis). 16 keeps the transient activation ~16x
+# smaller; the vectors produced are identical regardless of batch size.
+BATCH = int(os.environ.get("ENC_BATCH", "16"))
 QCHUNK = int(os.environ.get("QUERY_CHUNK", "256"))
 K = int(os.environ.get("KNN", "10"))
 SIM_FLOOR = float(os.environ.get("SIM_FLOOR", "0.55"))
@@ -74,6 +78,10 @@ KEEP_CAP = int(os.environ.get("KEEP_CAP", "8000"))
 N_SEMANTIC = int(os.environ.get("N_SEMANTIC", "150"))   # blind pairs to judge
 N_INJECT = int(os.environ.get("N_INJECT", "15"))        # recall-calibration positives
 MAX_MARKETS = int(os.environ.get("MAX_MARKETS", "0"))   # 0 = all clean-binary
+# TARGET_N: reservoir-sample the clean-binary universe to this many markets. The
+# full clean-binary set (~100k+) at 1 vCPU is hours of encode; a uniform sample
+# gives a valid first-pass hypothesis test in ~25 min and bounds memory. 0 = all.
+TARGET_N = int(os.environ.get("TARGET_N", "60000"))
 
 NUM_RE = re.compile(r"\$?\d[\d,]*(?:\.\d+)?")
 UP = re.compile(r"\b(above|over|greater|exceed|at least|>=|≥|more than|reach)\b", re.I)
@@ -141,9 +149,12 @@ def as_tokens(clob) -> int:
 def stage1_clean_binary() -> int:
     os.makedirs(EMB_DIR, exist_ok=True)
     hb("[1] filtering clean-binary from corpus ...")
+    rng = random.Random(SEED)
     n_in = n_bin = n_clean = 0
+    cap = TARGET_N if TARGET_N > 0 else None
+    reservoir = []                      # uniform sample of clean-binary records
     t0 = time.time()
-    with open(JSONL) as fh, open(CB, "w") as out:
+    with open(JSONL) as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -167,20 +178,30 @@ def stage1_clean_binary() -> int:
             eid = ev[0]["id"] if isinstance(ev, list) and ev and isinstance(ev[0], dict) else m.get("eventId")
             nums = [x for x in NUM_RE.findall(q)]
             ladder = digest(norm_no_num(q), src, end) if (nums and UP.search(q)) else ""
-            # retrieval text: question + condition head (before boilerplate), truncated
-            text = (q + " || " + desc[:400]).strip()[:1800]
-            out.write(json.dumps({
-                "id": m.get("id"), "text": text,
-                "event": str(eid) if eid else "",
-                "ladder": ladder,
-                "negrisk": bool(m.get("negRisk")),
-                "ents": ents(q),
-            }) + "\n")
-            if MAX_MARKETS and n_clean >= MAX_MARKETS:
-                break
+            # retrieval text: question + short condition head, kept SHORT to bound
+            # sequence length (attention memory) — retrieval needs topical recall,
+            # not full rules; the classifier reads full rules downstream.
+            text = (q + " || " + desc[:220]).strip()[:700]
+            rec = {"id": m.get("id"), "text": text,
+                   "event": str(eid) if eid else "",
+                   "ladder": ladder,
+                   "negrisk": bool(m.get("negRisk")),
+                   "ents": ents(q)}
+            if cap is None:
+                reservoir.append(rec)
+            elif len(reservoir) < cap:
+                reservoir.append(rec)
+            else:                          # reservoir sampling (uniform)
+                j = rng.randint(0, n_clean - 1)
+                if j < cap:
+                    reservoir[j] = rec
+    with open(CB, "w") as out:
+        for rec in reservoir:
+            out.write(json.dumps(rec) + "\n")
+    kept = len(reservoir)
     hb(f"[1] corpus={n_in} binary={n_bin} clean_binary={n_clean} "
-       f"({100*n_clean/max(n_in,1):.1f}% of corpus)  {time.time()-t0:.0f}s")
-    return n_clean
+       f"sampled={kept} ({100*n_clean/max(n_in,1):.1f}% clean of corpus)  {time.time()-t0:.0f}s")
+    return kept
 
 
 def cb_count() -> int:
@@ -218,7 +239,9 @@ def stage2_encode(n: int) -> None:
         nonlocal row
         if not texts:
             return
-        embs = np.asarray(list(model.embed(texts)), dtype="float32")
+        # pass batch_size so fastembed does not internally re-batch to its default
+        # 256 (which is what blew up the attention tensor); keep it == BATCH.
+        embs = np.asarray(list(model.embed(texts, batch_size=BATCH)), dtype="float32")
         embs /= (np.linalg.norm(embs, axis=1, keepdims=True) + 1e-9)
         mm[row:row + len(embs)] = embs
         row += len(embs)
