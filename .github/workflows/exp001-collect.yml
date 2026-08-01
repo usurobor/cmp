@@ -1,0 +1,76 @@
+# EXP001 one-off data-fetch bootstrap (Experiment 001, Sub 1 / #2).
+# Runs on the self-hosted runner `cn-sigma`, which has the open egress this
+# sandbox lacks. This is a throwaway collection helper, NOT part of the
+# experiment system — GitHub Actions is a #1 non-goal; remove this workflow
+# once the corpus is collected.
+name: exp001-collect
+
+on:
+  push:
+    branches: [claude/cmp-experiment-001-issue-c1oov4]
+    paths: ['.github/workflows/exp001-collect.yml', 'scripts/explore_polymarket.py']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: exp001-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: [self-hosted, cn-sigma]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Environment check
+        run: |
+          echo "host: $(hostname)"; echo "pwd: $(pwd)"
+          python3 --version || { echo "python3 missing on runner"; exit 1; }
+
+      - name: Smoke test (confirm Polymarket egress)
+        run: python3 scripts/explore_polymarket.py --max-pages 2 --price-samples 2
+
+      - name: Full collect
+        run: python3 scripts/explore_polymarket.py --price-samples 25
+
+      - name: Extract tracked samples
+        run: |
+          mkdir -p docs/experiment-001/samples
+          python3 - <<'PY'
+          import glob, json, pathlib
+          out = pathlib.Path("docs/experiment-001/samples")
+          pages = sorted(glob.glob("data/raw/polymarket/markets_p*.json"))
+          market = json.load(open(pages[0]))
+          if isinstance(market, dict):
+              market = market.get("data") or market.get("markets") or [market]
+          (out / "sample_market.json").write_text(json.dumps(market[0], indent=2))
+          prices = sorted(glob.glob("data/raw/polymarket/prices/*.json"))
+          if prices:
+              hist = json.load(open(prices[0]))
+              h = hist.get("history", hist) if isinstance(hist, dict) else hist
+              sample = {"truncated_to": 30, "history": h[:30] if isinstance(h, list) else h}
+              (out / "sample_price_history.json").write_text(json.dumps(sample, indent=2))
+          print("wrote samples:", [p.name for p in out.iterdir()])
+          PY
+
+      - name: Commit manifest + samples
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          git add docs/experiment-001/manifest.json docs/experiment-001/samples/ || true
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "exp001: collection manifest + samples from cn-sigma [skip ci]"
+            git push origin HEAD:claude/cmp-experiment-001-issue-c1oov4
+          fi
+
+      - name: Stash full corpus on box
+        run: |
+          dest="$HOME/cmp-exp001/${{ github.run_id }}"
+          mkdir -p "$dest"
+          cp -r data/raw "$dest/" 2>/dev/null || true
+          echo "corpus stashed at: $dest"
+          du -sh "$dest" 2>/dev/null || true
