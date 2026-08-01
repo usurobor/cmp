@@ -29,9 +29,6 @@ jobs:
           echo "host: $(hostname)"; echo "pwd: $(pwd)"
           python3 --version || { echo "python3 missing on runner"; exit 1; }
 
-      - name: Smoke test (confirm Polymarket egress)
-        run: python3 scripts/explore_polymarket.py --max-pages 2 --price-samples 2
-
       - name: Full collect
         run: python3 scripts/explore_polymarket.py --price-samples 25
 
