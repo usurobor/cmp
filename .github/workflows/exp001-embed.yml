@@ -39,7 +39,34 @@ jobs:
             "numpy>=1.24" fastembed onnxruntime
           python3 -c "import numpy, fastembed, onnxruntime; print('deps ok', numpy.__version__)"
       - name: Embed + retrieve + build blinded batch
-        run: python3 scripts/embed_and_retrieve.py
+        env:
+          STATUS_REF: refs/heads/status/exp001-embed
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          # Background progress heartbeat: force-push the latest progress line to
+          # STATUS_REF (commit subject = progress) every 60s so the cloud side can
+          # read live progress via git — the GitHub API won't serve an in-progress
+          # job's logs. Each push is a fresh root commit (force), no history growth.
+          ( last=""
+            while true; do
+              sleep 60
+              [ -f .embcache/progress.txt ] || continue
+              p=$(head -c 180 .embcache/progress.txt | tr -d '\n')
+              [ -z "$p" ] && continue
+              [ "$p" = "$last" ] && continue
+              last="$p"
+              blob=$(printf 'run %s: %s\n' "${GITHUB_RUN_ID}" "$p" | git hash-object -w --stdin)
+              tree=$(printf '100644 blob %s\tprogress.txt\n' "$blob" | git mktree)
+              cm=$(printf '%s' "$p" | git commit-tree "$tree")
+              git push -f origin "$cm:$STATUS_REF" >/dev/null 2>&1 || true
+            done ) &
+          HB=$!
+          set +e
+          python3 scripts/embed_and_retrieve.py
+          rc=$?
+          kill "$HB" 2>/dev/null || true
+          exit $rc
       - name: Commit fixtures
         if: success()
         env:

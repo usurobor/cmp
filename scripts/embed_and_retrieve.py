@@ -57,6 +57,7 @@ CB = os.path.join(EMB_DIR, "cb.jsonl")
 F32 = os.path.join(EMB_DIR, "cb.f32")
 IDS = os.path.join(EMB_DIR, "ids.npy")
 PAIRS = os.path.join(EMB_DIR, "semantic_pairs.jsonl")
+PROGRESS = os.path.join(EMB_DIR, "progress.txt")
 
 OUT_DIR = os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "derived")
 INPUT = os.path.join(OUT_DIR, "classification_input.jsonl")
@@ -94,6 +95,20 @@ def digest(*p) -> str:
     return hashlib.sha256("".join(str(x or "") for x in p).encode()).hexdigest()[:16]
 
 
+def hb(msg: str) -> None:
+    """Progress heartbeat: print AND write to PROGRESS. A background job in the
+    workflow force-pushes PROGRESS to refs/heads/status/exp001-embed every 60s,
+    so the cloud side can read live progress via `git ls-remote` without needing
+    box access or the browser (the GitHub API won't serve an in-progress log)."""
+    try:
+        os.makedirs(EMB_DIR, exist_ok=True)
+        with open(PROGRESS, "w") as f:
+            f.write(msg + "\n")
+    except OSError:
+        pass
+    print(msg, flush=True)
+
+
 def norm_no_num(q: str) -> str:
     return NUM_RE.sub("#", (q or "").lower()).strip()
 
@@ -125,6 +140,7 @@ def as_tokens(clob) -> int:
 # ---------------------------------------------------------------- stage 1
 def stage1_clean_binary() -> int:
     os.makedirs(EMB_DIR, exist_ok=True)
+    hb("[1] filtering clean-binary from corpus ...")
     n_in = n_bin = n_clean = 0
     t0 = time.time()
     with open(JSONL) as fh, open(CB, "w") as out:
@@ -162,8 +178,8 @@ def stage1_clean_binary() -> int:
             }) + "\n")
             if MAX_MARKETS and n_clean >= MAX_MARKETS:
                 break
-    print(f"[1] corpus={n_in} binary={n_bin} clean_binary={n_clean} "
-          f"({100*n_clean/max(n_in,1):.1f}% of corpus)  {time.time()-t0:.0f}s")
+    hb(f"[1] corpus={n_in} binary={n_bin} clean_binary={n_clean} "
+       f"({100*n_clean/max(n_in,1):.1f}% of corpus)  {time.time()-t0:.0f}s")
     return n_clean
 
 
@@ -185,12 +201,12 @@ def stage2_encode(n: int) -> None:
         print(f"[2] stale index ({len(existing)} != {n}); re-encoding")
 
     from fastembed import TextEmbedding
-    print(f"[2] loading model {MODEL_NAME} ...")
+    hb(f"[2] loading model {MODEL_NAME} ...")
     t0 = time.time()
     model = TextEmbedding(MODEL_NAME)
     probe = list(model.embed(["self-test"]))
     assert probe and probe[0].shape[0] == DIM, f"unexpected dim {probe[0].shape}"
-    print(f"[2] model ready ({time.time()-t0:.0f}s), dim={DIM}, encoding {n} texts")
+    hb(f"[2] model ready ({time.time()-t0:.0f}s), dim={DIM}, encoding {n} texts")
 
     mm = np.memmap(F32, dtype="float32", mode="w+", shape=(n, DIM))
     ids = []
@@ -218,12 +234,12 @@ def stage2_encode(n: int) -> None:
                 if row % (BATCH * 40) == 0:
                     rate = row / max(time.time() - t0, 1e-6)
                     eta = (n - row) / max(rate, 1e-6)
-                    print(f"[2]   {row}/{n}  {rate:.0f}/s  eta {eta/60:.0f}m", flush=True)
+                    hb(f"[2] encode {row}/{n}  {rate:.0f}/s  eta {eta/60:.0f}m")
         flush(buf)
     mm.flush()
     del mm
     np.save(IDS, np.array(ids, dtype=object))
-    print(f"[2] encoded {row} vectors in {(time.time()-t0)/60:.1f}m -> {F32}")
+    hb(f"[2] encoded {row} vectors in {(time.time()-t0)/60:.1f}m -> {F32}")
 
 
 # ---------------------------------------------------------------- stage 3
@@ -251,6 +267,7 @@ def stage3_retrieve(n: int):
         return False
 
     kept = {}   # (i,j) -> sim   ; semantic-only cross-event pairs
+    hb(f"[3] retrieval start: {n} vectors, K={K}, chunk={QCHUNK}")
     t0 = time.time()
     for s in range(0, n, QCHUNK):
         q = idx[s:s + QCHUNK]                    # (c, DIM)
@@ -274,7 +291,9 @@ def stage3_retrieve(n: int):
                 if prev is None or sv > prev:
                     kept[(a, b)] = sv
         if s % (QCHUNK * 20) == 0:
-            print(f"[3]   {s}/{n} queried, kept={len(kept)}  {time.time()-t0:.0f}s", flush=True)
+            el = max(time.time() - t0, 1e-6)
+            eta = (n - s) / max(s / el, 1e-6) if s else 0
+            hb(f"[3] retrieve {s}/{n} queried, kept={len(kept)}  eta {eta/60:.0f}m")
 
     pairs = sorted(kept.items(), key=lambda kv: kv[1], reverse=True)[:KEEP_CAP]
     with open(PAIRS, "w") as out:
@@ -283,16 +302,17 @@ def stage3_retrieve(n: int):
                                   "a_row": a, "b_row": b}) + "\n")
     if pairs:
         sv = [p[1] for p in pairs]
-        print(f"[3] semantic-only cross-event pairs kept={len(pairs)}  "
-              f"sim[min/med/max]={min(sv):.3f}/{sv[len(sv)//2]:.3f}/{max(sv):.3f}  "
-              f"{(time.time()-t0)/60:.1f}m")
+        hb(f"[3] semantic-only cross-event pairs kept={len(pairs)}  "
+           f"sim[min/med/max]={min(sv):.3f}/{sv[len(sv)//2]:.3f}/{max(sv):.3f}  "
+           f"{(time.time()-t0)/60:.1f}m")
     else:
-        print("[3] NO pairs kept — check SIM_FLOOR / filters")
+        hb("[3] NO pairs kept — check SIM_FLOOR / filters")
     return ids, events, ladders, negr
 
 
 # ---------------------------------------------------------------- stage 4
 def stage4_batch(n: int, ids, events, ladders):
+    hb("[4] building blinded stratified batch ...")
     rng = random.Random(SEED)
 
     # semantic strata: sample across similarity bands (blind to relation)
@@ -375,7 +395,7 @@ def stage4_batch(n: int, ids, events, ladders):
 
     from collections import Counter
     dist = Counter(c[2] for c in chosen)
-    print(f"[4] batch written={written}  strata={dict(dist)}")
+    hb(f"[4] batch written={written}  strata={dict(dist)}")
     print(f"[4] input -> {INPUT}\n[4] manifest -> {MANIFEST}")
 
 
@@ -392,7 +412,7 @@ def main() -> None:
     stage2_encode(n)
     ids, events, ladders, negr = stage3_retrieve(n)
     stage4_batch(n, ids, events, ladders)
-    print("DONE")
+    hb("[done] fixtures ready")
 
 
 if __name__ == "__main__":
