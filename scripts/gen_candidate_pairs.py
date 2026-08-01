@@ -35,6 +35,8 @@ DATA_DIR = os.environ.get("CMP_DATA_DIR", "/var/lib/cmp/data")
 JSONL = os.path.join(DATA_DIR, "derived", "liquid_volume_ge_10000.jsonl")
 OUT_DIR = os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "derived")
 OUT = os.path.join(OUT_DIR, "candidate_pairs.jsonl")
+REVIEW = os.path.join(OUT_DIR, "pairs_for_review.jsonl")
+REVIEW_N = int(os.environ.get("PAIR_REVIEW_N", "150"))
 
 MAX_BUCKET = int(os.environ.get("PAIR_MAX_BUCKET", "1200"))
 NEIGHBORS = int(os.environ.get("PAIR_NEIGHBORS", "30"))
@@ -189,6 +191,7 @@ def main() -> None:
     seen, kept, cross = set(), 0, 0
     by_reason = defaultdict(int)
     samples = []
+    review_rows = []
     with open(OUT, "w") as out:
         for ia, nbrs in cand.items():
             fa = feats[ia]
@@ -220,8 +223,37 @@ def main() -> None:
                     by_reason[r] += 1
                 if not same_event:
                     cross += 1
+                    review_rows.append((score, fa["id"], fb["id"], reasons))
                     if len(samples) < 30:
                         samples.append(rec)
+
+    # Full-text review batch for the top cross-event pairs: the price-blind input
+    # to the joint-state classifier (Claude). Second pass fetches full rules text.
+    review_rows.sort(reverse=True)
+    top = review_rows[:REVIEW_N]
+    want = {i for _, a, b, _ in top for i in (a, b)}
+    fulltext = {}
+    with open(JSONL) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                m = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            mid = m.get("id")
+            if mid in want:
+                fulltext[mid] = {"question": m.get("question") or "",
+                                 "description": (m.get("description") or "")[:4000],
+                                 "resolution_source": m.get("resolutionSource") or "",
+                                 "end_date": m.get("endDate")}
+    with open(REVIEW, "w") as rf:
+        for score, a, b, reasons in top:
+            rf.write(json.dumps({"a": a, "b": b, "candidate_reasons": reasons,
+                                 "score": score, "contract_a": fulltext.get(a, {}),
+                                 "contract_b": fulltext.get(b, {})}) + "\n")
+    print(f"review batch -> {REVIEW} ({len(top)} pairs w/ full text)")
 
     print(f"\n===== CANDIDATE PAIRS (structured, price-free) =====")
     print(f"kept: {kept} | cross-event (prize): {cross} | same-event (control): {kept - cross}")
