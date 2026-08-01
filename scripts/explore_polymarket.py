@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
 import sys
 import time
@@ -63,7 +64,15 @@ from pathlib import Path
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
 
-RAW_DIR = Path("data/raw/polymarket")
+# The corpus is the durable artifact and must not live inside the CI
+# workspace: actions/checkout wipes gitignored paths, and re-registering
+# the runner deletes _work entirely. CMP_DATA_DIR points at storage owned
+# by the box (/var/lib/cmp/data in production) so the GitHub Actions
+# wrapper -- a throwaway egress workaround, not part of the experiment --
+# can be deleted without taking the corpus with it. The relative default
+# keeps local runs and tests working unchanged.
+DATA_DIR = Path(os.environ.get("CMP_DATA_DIR") or "data")
+RAW_DIR = DATA_DIR / "raw" / "polymarket"
 PRICES_DIR = RAW_DIR / "prices"
 CHECKPOINT_PATH = RAW_DIR / "_checkpoint.json"
 MANIFEST_PATH = Path("docs/experiment-001/manifest.json")  # tracked (outside data/)

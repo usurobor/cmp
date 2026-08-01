@@ -21,6 +21,11 @@ concurrency:
 jobs:
   collect:
     runs-on: [self-hosted, cn-sigma]
+    env:
+      # The corpus lives on the box, not in the CI workspace. This workflow
+      # exists only to give a network-restricted sandbox a way to trigger
+      # collection; deleting it must not delete the data.
+      CMP_DATA_DIR: /var/lib/cmp/data
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,14 +47,15 @@ jobs:
         run: |
           mkdir -p docs/experiment-001/samples
           python3 - <<'PY'
-          import glob, json, pathlib
+          import glob, json, os, pathlib
           out = pathlib.Path("docs/experiment-001/samples")
-          pages = sorted(glob.glob("data/raw/polymarket/markets_p*.json"))
+          root = os.environ.get("CMP_DATA_DIR") or "data"
+          pages = sorted(glob.glob(f"{root}/raw/polymarket/markets_p*.json"))
           market = json.load(open(pages[0]))
           if isinstance(market, dict):
               market = market.get("data") or market.get("markets") or [market]
           (out / "sample_market.json").write_text(json.dumps(market[0], indent=2))
-          prices = sorted(glob.glob("data/raw/polymarket/prices/*.json"))
+          prices = sorted(glob.glob(f"{root}/raw/polymarket/prices/*.json"))
           if prices:
               hist = json.load(open(prices[0]))
               h = hist.get("history", hist) if isinstance(hist, dict) else hist
