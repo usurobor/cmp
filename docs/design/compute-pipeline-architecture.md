@@ -26,7 +26,10 @@ The day's incidents (collector OOM ×2, gen_candidate_pairs throttle, embed swap
   extrapolates, and *refuses* an infeasible job with a number.
 - **L2 — Every long job resumes.** Checkpointed + idempotent; kill ≠ start-from-zero.
 - **L3 — Observable without privilege.** Run-state any observer can query with no
-  box access and no browser.
+  box access and no browser. Corollary (ω's rule): **silence must be falsifiable**
+  — a monitor whose failure is indistinguishable from quiet success manufactures
+  false confidence and is worse than none; every watcher emits a distinct signal
+  on its own failure modes (blind / gone / unreachable), never a silent skip.
 - **L4 — Memory bounded by construction.** Peak RSS = f(shard), never f(corpus).
 - **L5 — Errors surface.** Explicit `Result`; no `2>/dev/null` that blinds for 5 h.
 - **L6 — Failure is cheap.** Degrade / skip / checkpoint, never collapse.
@@ -161,7 +164,7 @@ resume_point, last_error
 ```
 Written to the persistent data dir **and mirrored to a git ref** (the heartbeat
 already built, generalized from a one-line commit subject to the full state
-blob). Any external observer — δ, the assistant, the operator — reads current
+blob). Any external observer — δ, ω, the operator — reads current
 state with one `git ls-remote` + fetch, with **no box access and no browser**.
 This closes the "couldn't tail" gap structurally, not by asking a human to watch.
 
@@ -295,10 +298,12 @@ the probe produces); full-N feasibility is a probe output, not an assumption.
 
 ## 9. What the box resize changed (and what it didn't)
 
-The box was resized up from 2 GB / 1 vCPU. This changes Slicer's *parameters and
-one tool choice*, not its *shape*. The invariants (L1–L6) and the whole design
-above hold at any size — they pay off regardless of box, and the O(n²) pairwise /
-time-series stages will need them.
+The box was resized from 2 GB / 1 vCPU **to 8 vCPU / 16 GB** (runner cgroup caps
+now High 10 G / Max 12 G; disk 50 GB unchanged — measured envelope confirmed by ω,
+2026-08-02). This changes Slicer's *parameters and one tool choice*, not its
+*shape*. The invariants (L1–L6) and the whole design above hold at any size — they
+pay off regardless of box, and the O(n²) pairwise / time-series stages will need
+them.
 
 - **Simplified (the real change): out-of-core drops from mandatory to selective.**
   At N=222,855 the index is 222,855 × 384 × 4 ≈ **342 MB** — comfortably in RAM
@@ -310,13 +315,20 @@ time-series stages will need them.
 - **Added: parallelism.** Pointless on 1 vCPU, now the main speed lever — encode
   fans out across cores (multiprocess over shards, or raised ORT threads);
   retrieval matmul auto-parallelizes via BLAS. ~5–8× wall-clock.
-- **Retuned: budgets and knobs.** `ENC_BATCH` back up (16 was a 2 GB survival
-  hack); larger shards, fewer checkpoints; **full-222k is the default run**,
-  sample-mode stays as the dev tracer. The probe derives all budgets from the
-  measured box, so no box specs are hardcoded.
+- **Retuned: budgets and knobs (concrete, on the measured box).** `ENC_BATCH`
+  16 → **256** (the ~3.2 GB ORT attention arena that swapped the old box now fits
+  with headroom, and batch 256 is materially faster per item); encode **shards
+  run concurrently** across the 8 cores and retrieval BLAS parallelizes;
+  **full 222,855 in one pass is the default run**, the 60k reservoir demotes to a
+  sample-mode dev tracer, and **sharding becomes an availability/resume choice,
+  not the only way the job finishes.** The probe still derives every budget from
+  `nproc`/`MemAvailable` at runtime, so no box specs are hardcoded — it simply
+  measures the bigger box.
 - **Unchanged (the shape):** idempotent checkpointed stages, the data catalog,
-  run-state + git-ref mirror, the probe gate, sample-mode, functional core, the
-  DIY runner. And the fact that the heavy out-of-core machinery returns for the
+  the probe gate, sample-mode, functional core, the DIY runner. Observability =
+  queryable run-state (L3); its **transport is a separate operational surface,
+  not a memory post** (telemetry-as-memory is out per cnos#690) — bound to the
+  comms model, not hardcoded. And the heavy out-of-core machinery returns for the
   pairwise / price stages.
 
 Net: the resize made Slicer **simpler and faster**, not different in kind. The
