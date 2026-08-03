@@ -1,0 +1,74 @@
+# Slicer Sub A — generic spine proven on a synthetic checkpointed long stage.
+# Executable contract: issue v2.2 @ 792f65d. Runs on cn-sigma. No model, no
+# corpus, no ANN, no retrieval, no Sub B/C. Fault-injection/over-budget run in
+# isolated RLIMIT-capped child processes (never touch the runner daemon).
+#
+# NOTE: this workflow does NOT trigger on refs/heads/slicer-status/** — the
+# heartbeat status refs must enqueue no workflow (AC-A4). It triggers only on the
+# work branch for its own sources, or manual dispatch.
+name: slicer-sub-a
+
+on:
+  push:
+    branches: [claude/cmp-experiment-001-issue-c1oov4]
+    paths:
+      - 'scripts/slicer_sub_a.py'
+      - 'slicer/catalog.json'
+      - '.github/workflows/slicer-sub-a.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: slicer-sub-a
+  cancel-in-progress: false
+
+jobs:
+  sub-a:
+    runs-on: [self-hosted, cn-sigma]
+    env:
+      OMP_NUM_THREADS: "1"
+      ORT_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Run Sub A oracles (synthetic spine)
+        id: run
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          set +e
+          python3 scripts/slicer_sub_a.py oracles
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+      - name: Commit receipt + evidence
+        if: always()
+        env:
+          BRANCH: claude/cmp-experiment-001-issue-c1oov4
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          git add -f derived/slicer/sub_a_receipt.json derived/slicer/evidence || true
+          if git diff --cached --quiet; then
+            echo "no receipt changes"; exit 0
+          fi
+          git commit -m "slicer Sub A: receipt + evidence [skip ci]"
+          for i in 1 2 3 4 5; do
+            git fetch origin "$BRANCH" && git rebase "origin/$BRANCH" && \
+              git push origin "HEAD:$BRANCH" && exit 0
+            echo "push retry $i"; git rebase --abort 2>/dev/null || true; sleep 3
+          done
+          echo "failed to push receipt"; exit 1
+      - name: Enforce Sub A gate (fail job if contract not accepted)
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json,sys
+          r=json.load(open("derived/slicer/sub_a_receipt.json"))
+          print("execution_status  :", r["execution_status"])
+          print("contract_status   :", r["contract_status"])
+          print("retrieval_instr   :", r["retrieval_instrument_status"])
+          print("discovery_status  :", r["discovery_status"])
+          sys.exit(0 if r["contract_status"]=="accepted" else 1)
+          PY

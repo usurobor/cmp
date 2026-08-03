@@ -21,3 +21,5 @@ data/
 .idea/
 *.swp
 .embcache/
+.slicer-work/
+derived/slicer/

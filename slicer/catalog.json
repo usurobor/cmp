@@ -1,0 +1,30 @@
+{
+  "schema_version": "slicer-catalog/1",
+  "datasets": {
+    "synthetic_seed": {
+      "kind": "raw",
+      "path": "slicer/catalog.json",
+      "format": "json",
+      "read_only": true,
+      "note": "trivial synthetic/catalog check only — Sub A touches no market corpus"
+    },
+    "sub_a_shards": {
+      "kind": "derived",
+      "path": ".slicer-work/shards",
+      "format": "shard-dir",
+      "read_only": false
+    },
+    "sub_a_receipt": {
+      "kind": "derived",
+      "path": "derived/slicer/sub_a_receipt.json",
+      "format": "json",
+      "read_only": false
+    },
+    "sub_a_evidence": {
+      "kind": "derived",
+      "path": "derived/slicer/evidence",
+      "format": "dir",
+      "read_only": false
+    }
+  }
+}
