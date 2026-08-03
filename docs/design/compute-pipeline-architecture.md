@@ -16,6 +16,16 @@ state), `write-functional` (pure core, effects at edges), `process-economics`
 (not DVC — see §4); box **resized** up from 2 GB / 1 vCPU, so out-of-core is
 deferred and parallelism is added (see §4, §9).
 
+> **Authority (2026-08-02).** This document owns the **invariants, rationale, and
+> framework research**. It does **not** own the executable specifics — retrieval
+> algorithm, worker/thread/batch configuration, shard format, memory model. Those
+> are bound by the **Slicer issue** (`docs/design/slicer-issue-draft.md`), and
+> **where this document and the issue differ on any executable specific, the issue
+> supersedes** (notably §§4, 6, 9 below). Concrete numbers here (e.g. `ENC_BATCH`,
+> "concurrent shards", `np.memmap`, "chunked cosine") are **illustrative of the
+> reasoning at the time of writing**; the issue's probe-selected config, immutable
+> `.npy` shards, and declared heuristic ANN are authoritative.
+
 ## Invariants (what our own failures crystallized into)
 
 The day's incidents (collector OOM ×2, gen_candidate_pairs throttle, embed swap,

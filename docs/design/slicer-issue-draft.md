@@ -1,321 +1,333 @@
-# Build Slicer v2 — CMP candidate-retrieval instrument (spine-first, runner-cell)
+# Build Slicer v2.1 — CMP candidate-retrieval instrument (spine-first, runner-cell)
 
 **Mode:** design-and-build.
-**Source of truth:** `docs/design/compute-pipeline-architecture.md` + RCA
-`threads/rca/2026-08-01-embed-memory-blowup.md`. This issue is the executable
-contract; the consequential algorithm (retrieval) is bound **here**, not deferred
-to the design.
+**Source of truth:** `docs/design/compute-pipeline-architecture.md` (invariants +
+rationale) + RCA `threads/rca/2026-08-01-embed-memory-blowup.md`. **Authority:**
+this issue owns all *executable specifics* (retrieval algorithm, worker/thread/
+batch config, shard format, memory model); **where the design doc and this issue
+differ on an executable specific, this issue supersedes** (design §§4, 6, 9 are
+illustrative).
 **Dispatch target:** one ephemeral Slicer run on the cn-sigma self-hosted runner
 (the "cell" = the run; filter/embed/retrieve are **stages, not agents**). δ
 dispatches; the run emits a receipt; δ accepts/rejects.
-**Governing contract:** invariants **L1–L6** (below). Every AC serves one; each has
-a file+check+pass/fail oracle.
+**Governing contract:** invariants **L1–L6**; each AC has a file+check+pass/fail
+oracle.
 
-> L1 measure-before-scale · L2 resumable · L3 observable-without-privilege
-> (silence falsifiable) · L4 memory-bounded-by-construction · L5 errors-surface ·
-> L6 failure-is-cheap (measurable, not asserted).
+> L1 measure-before-scale · L2 resumable (every projected-long stage) · L3
+> observable-without-privilege (silence falsifiable) · L4 memory-bounded-by-
+> construction · L5 errors-surface · L6 failure-is-cheap (measured).
 
 ## What Slicer is — and is not (TSC framing)
 
-Slicer performs an **α-like observation/filter** and an **early β-like heuristic
-relation-candidate search**. It does **not** infer permitted joint states,
-establish relation standing, build the atlas or the law, or detect price
-incoherence. Its output is therefore **candidate pairs**, never *identified
+α-like observation/filter + **early β-like heuristic candidate search**. It does
+not infer joint states, establish relation standing, build the atlas/law, or
+detect price incoherence. Output = **candidate pairs**, never *identified
 relations* or *tradeable incoherences*.
 
-Its search claim is heuristic and bounded:
 ```yaml
 relation_search_claim:
   kind: heuristic
   bounded_surface:            # corpus boundary + filter predicate digest
-  embedding_and_index_digest: # model + ANN config
+  embedding_and_index_digest:
   k:
   controls:                   # injected known-positives
 ```
-A successful run establishes only: *under this frozen corpus boundary and this
-declared heuristic retrieval method, these candidate pairs were surfaced
-reproducibly.* **It does not establish that non-retrieved relations do not exist.**
-A negative result reads "this embedding+index+config did not surface it," never
-"semantic retrieval does not work."
-
-Full CMP sequence (Slicer is only the first hop):
-`Slicer candidate retrieval → blinded permitted-joint-state classification →
-counterexample review → global SAT/SMT atlas → frozen joint-settlement law →
-price-realizability LP → executable trade witness.`
+A run establishes only: *under this frozen boundary and this declared heuristic
+method, these candidate pairs surfaced reproducibly.* A negative reads "this
+embedding+index+config did not surface it," never "semantic retrieval does not
+work." Full CMP sequence: `Slicer → blinded joint-state classification →
+counterexample review → SAT/SMT atlas → frozen law → price LP → trade witness.`
 
 ## Non-goals
-Classifier/verification (downstream, sandbox) · exact all-pairs O(n²) retrieval ·
-the pairwise/global constraint stage · price/volume/outcome exposure to the
-classifier · SAT/SMT/LP/prices · DuckDB/Polars-streaming (deferred until a stage
-exceeds RAM) · heavyweight orchestrator · persistent box-agent · claiming
-filesystem confinement without a sandbox.
+Classifier/verification (downstream) · **exact full-corpus all-query retrieval**
+(that IS the excluded O(n²) pairwise) · the pairwise/global stage · price/volume/
+outcome exposure to retrieval OR classification · SAT/SMT/LP · DuckDB/Polars
+(deferred) · heavyweight orchestrator · persistent box-agent · claiming filesystem
+confinement without a sandbox.
+
+## Preregistration & instrument validity (frozen before evaluation)
+
+To prevent tuning-on-the-test-set, retrieval configuration is **preregistered**
+via a **calibration/held-out split of the injected controls**:
+
+```
+controls  = calibration_controls ⊎ heldout_controls        # disjoint, seeded
+1. select embedding + ANN config + k using calibration_controls only
+2. freeze config → embedding_and_index_digest (immutable thereafter)
+3. run held-out evaluation ONCE against heldout_controls
+4. report held-out recall as the instrument-validity result
+```
+Reusing held-out controls to retune is a contract violation (digest changes ⇒ new
+preregistration ⇒ new held-out set).
+
+**Instrument-validity gates** (distinct from the scientific result):
+```yaml
+computational_recall_gate:      # approx-kNN vs exact on seeded queries, min pass
+relation_control_recall_gate:   # heldout known-positive recovery, min pass
+novel_relation_yield:           # MEASURED RESULT — never a gate
+```
+Interpretation: **low `novel_relation_yield` is a valid negative scientific
+result; failing `relation_control_recall_gate` means the instrument failed and any
+yield is uninterpretable.** `done` requires **both gates pass** (not just outputs+
+digests) — see AC-C3.
 
 ## Frozen inputs (pinned + digested; recorded in the receipt)
-
 ```yaml
-corpus_manifest:      {artifact, digest, market_count}        # liquid vol>=$10k
-clean_binary_predicate: {version, digest}                     # the filter rule
+corpus_manifest:        {artifact, digest, market_count}      # liquid vol>=$10k
+clean_binary_predicate: {version, digest}
 embedding:
-  model_id:           # e.g. BAAI/bge-small-en-v1.5
-  model_revision:     # exact HF revision / ONNX file digest
-  input_representation:  # the exact text template fed to the model
-  dimension:
-  dtype:              # e.g. float32
-  normalization:      # e.g. L2 unit
-  truncation_policy:  # max tokens + how truncated
+  model_id: · model_revision: · input_representation: · dimension: · dtype:
+  normalization: · truncation_policy:
 retrieval:
-  algorithm:          # e.g. hnswlib | faiss-IVF | exact-chunked — DECLARED
-  implementation_version:
-  metric:             # cosine | ip | l2
-  k:
-  index_parameters:   # e.g. M, efConstruction
-  query_parameters:   # e.g. efSearch
-  seed:
-  search_claim:       heuristic
-mechanical_baseline:  {artifact, digest, generation_commit, method_version, pair_canonicalization}
+  algorithm:            # declared ANN (e.g. hnswlib) — heuristic unless exact-reference
+  implementation_version: · metric: · k: · index_parameters: · query_parameters:
+  seed: · search_claim: heuristic
+mechanical_baseline:    {artifact, digest, generation_commit, method_version, pair_canonicalization}
+retrieval_input:        {allowed[], forbidden[], rendered_template_digest}   # AC-B0
+control_split:          {calibration_ids_digest, heldout_ids_digest, seed}
 ```
-`corpus_manifest`, `clean_binary_predicate`, and `mechanical_baseline` are
-**frozen before the run**; the run refuses if any digest is missing.
+The run **refuses** (`refusal_gate: frozen_inputs`) if any required digest is
+missing or if `embedding_and_index_digest` changed after the held-out split.
 
 ---
 
 ## Sub A — Slicer spine (prove on a trivial stage before any encode)
 
-**AC-A1 — Catalog governs I/O (truthful, not over-claimed).** `catalog.yaml`
-names every dataset (name, path, format, schema, `raw|derived`). The runner
-supplies **only** catalog-resolved paths, validates every declared input/output,
-opens raw inputs **read-only** where supported, and **refuses to publish an
-output not registered in the catalog**.
-*Oracle:* a stage declaring an unregistered output fails before writing; a raw
-input is opened read-only. **Not claimed:** that arbitrary stage code cannot touch
-an unnamed path (no sandbox → not mechanically enforceable → not promised).
+**AC-A1 — Catalog governs I/O (truthful, not over-claimed).** `catalog.yaml` names
+every dataset (name, path, format, schema, `raw|derived`). The runner supplies
+**only** catalog-resolved paths, validates declared inputs/outputs, opens raw
+read-only where supported, and **refuses to publish an unregistered output**.
+*Oracle:* unregistered declared output → fail before write; raw opened read-only.
+**Not claimed:** that stage code cannot touch an unnamed path (no sandbox).
 
-**AC-A2 — Idempotent skip on a complete key, verified (L2).** Skip key binds
-**all** of: `input_digest, params_digest, code/git_sha, stage_impl_version,
-catalog_digest, schema_version, embedding_model_revision, seed, dep_lock_digest`.
-A stage is skipped only when its outputs' recorded digests match **and** a
-completion marker exists — never on mere file presence.
-Write protocol: `tmp → fsync → digest → atomic rename → append completed entry to
-the shard/stage manifest`.
-*Oracle:* change any skip-key component → stage re-runs; kill mid-write → the
-partial `.tmp` is never mistaken for complete (no completion entry); re-run with
-all components unchanged → zero work, run-state `skipped`.
+**AC-A2 — Idempotent skip on a complete, verified key (L2).** Skip key binds:
+`input_digest, params_digest, git_sha, stage_impl_version, catalog_digest,
+schema_version, embedding_model_revision, seed, dep_lock_digest`. Skip only when
+recorded output digests match **and** a completion marker exists. Write protocol:
+`tmp → fsync → digest → atomic rename → append completed entry`.
+*Oracle:* change any key component → re-run; kill mid-write → partial `.tmp` never
+counts complete; unchanged → zero work, `skipped`.
 
-**AC-A3 — Self-calibrating gate, grounded and enforced (L1).** The probe builds a
-**stage-specific** memory model, not a single number:
+**AC-A3 — Capacity gate: cgroup-effective, group-wide, enforced (L1).** The probe
+derives **effective** capacity from the cgroup, not the host:
 ```
-filter:      bounded streaming (O(1) in corpus)
-embed:       model-load baseline + per-worker overhead + batch overhead + output-shard
-index-build: vector matrix + index structure + temp construction overhead
-retrieve:    query batch + result buffers + dedup buffers
+effective_memory = min(host_MemAvailable, cgroup.memory.max − cgroup.memory.current)
+effective_cpu    = cgroup cpu.quota / cpuset   (NOT nproc alone)
 ```
-It combines **exact static calculation** where dims are known (vector matrix =
-N·dim·sizeof(dtype)), **empirical measurement** where library overhead is not
-(model load, ANN index structure, ORT arena), a **declared safety factor**, and a
-**hard runtime memory cap**. The full run is **refused before expensive work** if
-projected peak > derived budget or projected wall-clock > threshold, emitting the
-numbers. The cap is **enforced** (cgroup/`MemoryMax` on the run) — or, if
-enforcement is unavailable, the claim weakens explicitly to *"monitor and
-terminate on budget breach"* (no silent overrun).
-*Oracle:* tiny `MEM_BUDGET` → refuse with a concrete projection; normal → pass +
-record the measured model; a deliberate over-budget allocation is **killed by the
-cap**, not silently tolerated.
+It builds a **stage-specific** model (filter: streaming O(1); embed: model-load +
+per-worker + batch + output-shard; index-build: vector matrix N·dim·sizeof(dtype)
++ index structure + temp; retrieve: query batch + result + dedup), combining
+**exact static calc** (vector matrix) + **empirical measurement** (model load, ANN
+structure, ORT arena) + **declared safety factor**. The full run is **refused
+before expensive work** (`refusal_gate: capacity`) if projected peak > effective
+budget or projected wall-clock > threshold, emitting the numbers. Measured peak is
+**whole-cgroup / process-tree** memory (`memory.peak` where available), **not**
+parent RSS or a heartbeat sample.
+*Oracle (branch-sensitive):* tiny budget → refuse with projection; **if hard
+enforcement is available** (`MemoryMax` on the run), a deliberate over-budget
+allocation is **killed by the cap**; **if only monitor-and-terminate is
+available**, that path terminates the run on breach — the oracle tests whichever
+branch the contract declares, not always hard-cap.
 
-**AC-A3b — Thread/worker config is measured, not hardcoded.** The probe **chooses
-and records** the worker count and library thread caps from a bounded candidate
-set; the runner explicitly caps BLAS/OpenMP/ORT threads and **must not
-oversubscribe** the measured box (N workers × M library threads ≤ cores). The
-prior "8 concurrent workers" hardcode is **removed** — oversubscription is exactly
-the interaction that reproduces the incident.
-*Oracle:* the receipt records the chosen `(workers, threads_per_worker)`; measured
-concurrency never exceeds cores.
+**AC-A3b — Worker/thread config measured, not hardcoded.** The probe **chooses and
+records** `(workers, threads_per_worker, batch)` from a bounded candidate set; the
+runner caps BLAS/OpenMP/ORT threads so `workers × threads ≤ effective_cpu` — **no
+oversubscription** (the interaction that reproduced the incident). No hardcoded
+"256"/"8 concurrent".
+*Oracle:* receipt records the chosen config; observed concurrency ≤ effective_cpu.
 
-**AC-A4 — Two-object observability; silence falsifiable (L3).** Split cleanly:
+**AC-A4 — Two-object observability; heartbeat round-trip self-verified (L3).**
 - **local checkpoint state** — durable on the box, **authoritative for resume**.
-- **remote heartbeat projection** — published to a git ref
-  `refs/heads/slicer-status/<run_id>` (a dedicated status ref, **not** a memory
-  box; force-pushed), **authoritative for "is it alive?"** δ reads it with no box
-  access.
-The heartbeat carries a **monotonically increasing `heartbeat_seq`** (not only
-`updated_at`, so a cached read cannot look current), plus `{stage, shard i/N,
-rows, peak_rss, status}`. Policy: **initial heartbeat before any heavy work**,
-fixed cadence, a `stale_after` threshold, a terminal update, and **fail-closed on
-publish failure** (if the heartbeat cannot be published, the expensive stage does
-not start). **Hard rule:** the expensive stage may not begin until δ (the remote
-observer) has **read the initial heartbeat back**.
-*Oracle:* δ polling the status ref sees advancing `heartbeat_seq` + true
-stage/rows mid-run and the terminal status after; block the publish → the run
-refuses to enter the expensive stage rather than running unobserved.
+- **remote heartbeat** — force-pushed to `refs/heads/slicer-status/<run_id>` (a
+  status ref, **not** a memory box), **authoritative for "alive?"**, carrying a
+  **monotonic `heartbeat_seq`** (+ `stage, shard i/N, rows, cgroup_mem, status`).
 
-**AC-A5 — sample|full, one code path; oracle corrected (L1).** `mode=sample(N)`
-and `mode=full` invoke the **same stage implementations, schemas, parameters, and
-normalization**; the sample is a **deterministic restriction of the input
-universe** (seeded). **Filter and embedding outputs must agree record-for-record**
-with the corresponding full-run records. **Retrieval is interpreted only relative
-to the selected sample universe and is NOT claimed to be a projection of
-full-corpus retrieval** (a record's neighbors within 10k need not be its neighbors
-within 222,855).
-*Oracle:* for records in both runs, filter verdict and embedding vector are
-identical; retrieval results are compared only within-universe, never asserted
-equal across universes.
+Before any expensive stage the runner performs a **remote round-trip self-check**:
+`publish initial heartbeat → independently fetch the remote ref → verify run_id +
+heartbeat_seq + digest match → only then start`. This proves the external channel
+works **without** requiring δ to be online (consistent with no always-on agent);
+δ polls the ref afterward. Policy: fixed cadence, `stale_after` threshold, terminal
+update, **fail-closed** — if publish or the round-trip fails, the run **refuses**
+(`refusal_gate: observability`).
+*Oracle:* δ polling sees advancing `heartbeat_seq` + true stage/rows mid-run and
+terminal status after; block the push → the run refuses to enter the expensive
+stage; a cached/stale ref is detectable via `heartbeat_seq`, not `updated_at`.
 
-**AC-A6 — Resume via immutable shard files (L2).** Embeddings are written as
-**immutable per-shard files** `embeddings/shard-NNNNN.npy` with a manifest entry
-`{digest, row_range}` — **not** many workers mutating one shared memmap. A later
-deterministic stage exposes the complete set as one logical mmap matrix. Resume =
-**skip verified-complete shard files**, never "infer trustworthy regions of a
-shared file."
-*Oracle:* `SIGKILL` mid-encode; restart; completed shards (digest-verified) are
-skipped, only the incomplete/missing shard recomputes; no shared-file corruption
-path exists.
+**AC-A5 — sample|full, one code path; oracle corrected (L1).** Same
+implementations/schemas/params/normalization; sample = **deterministic restriction
+of the input universe** (seeded). **Filter and embedding outputs agree
+record-for-record** with the full run. **Retrieval is interpreted only within the
+selected sample universe and is NOT claimed a projection of full-corpus
+retrieval.**
+*Oracle:* shared records → identical filter verdict + embedding vector; retrieval
+compared only within-universe.
 
-**AC-A7 — Receipt (schema in Sub C) sufficient for δ to accept from receipt +
-its content-addressed references alone.**
+**AC-A6 — Resume applies to EVERY projected-long stage (L2).** General rule:
+**any stage whose probe projects `> max_uncheckpointed_work_s` must expose a
+resumable checkpoint boundary or be refused.** Concretely:
+- embed → immutable per-shard `.npy` + manifest `{digest, row_range}` (no shared
+  memmap mutation); resume = skip digest-verified shards.
+- index-build, retrieve (query shards), candidate-manifest emit → each declares its
+  checkpoint boundary or the probe refuses the stage.
+`max_uncheckpointed_work_s` is a **declared threshold**, and each long stage has a
+stage-by-stage resume proof.
+*Oracle:* `SIGKILL` mid-stage in embed **and** in retrieve → each resumes from its
+last checkpoint; a long stage with no checkpoint boundary is refused, not run.
+
+**AC-A7 — Receipt (Sub C) sufficient for δ to accept from receipt + its
+content-addressed references alone.**
 
 ---
 
 ## Sub B — Slicer stages (on the proven spine)
 
-**AC-B1 — filter + attrition receipt (L4, observation boundary).** Streams the
-corpus → clean-binary subset; peak RSS O(1) in corpus size. Because "clean-binary"
-is a **major observation boundary**, the stage emits an attrition receipt:
-`{total_input, included, excluded_by_reason{...}, predicate_version, predicate_digest,
-included_audit_sample(seeded), excluded_audit_sample(seeded)}`.
-The `vol>=$10k` corpus boundary is a **predeclared tradability scope, not evidence
-that a relation is true**; it is stated as such, and **volume never reaches the
-classifier**.
-*Oracle:* excluded-by-reason counts sum to `total_input − included`; the seeded
-excluded-sample is inspectable; no volume field appears downstream of filter.
+**AC-B0 — Retrieval-input blindness (before embedding).** The text embedded is a
+rendered representation over an **explicit allowlist**, hashed:
+```yaml
+retrieval_input:
+  allowed:   [title, description, normative_rules, resolution_source,
+              temporal_fields, void_conditions, settlement_domain]
+  forbidden: [prices, volume, outcome, resolution_result, resolver_status, comments]
+  rendered_template_digest:
+```
+*Oracle:* the rendered representation is built **only** from allowlisted keys
+(recursive JSON-key validation against the allowlist — **not** string-grep, since a
+contract may legitimately contain the word "price"/"score"); its digest is
+recorded.
+
+**AC-B1 — filter + attrition receipt (L4, observation boundary).** Streams corpus →
+clean-binary; peak RSS O(1). Emits attrition receipt `{total_input, included,
+excluded_by_reason{...}, predicate_version, predicate_digest,
+included_audit_sample(seeded), excluded_audit_sample(seeded)}`. The `vol>=$10k`
+boundary is a **predeclared tradability scope, not evidence**. **Volume remains
+only in evaluation metadata and never reaches retrieval or classification.**
+*Oracle:* excluded-by-reason sums to `total_input − included`; recursive key-check
+confirms no `volume`/`price`/`outcome` in the retrieval-input or classifier-input
+schemas (only in `evaluation_manifest.jsonl`).
 
 **AC-B2 — embed: immutable sharded, probe-configured (L1/L2/L4).** Shards encode
-under the probe-chosen `(workers, threads)` config; `ENC_BATCH` is set from the
-probe, not hardcoded; each shard is an immutable `.npy` + manifest entry (AC-A6);
-peak RSS stays within the enforced budget (AC-A3).
-*Oracle:* probe passes; full 222,855 completes in one pass **or** the probe
-refuses with numbers (both pass DoD); mid-encode kill resumes at shard boundary;
-receipt's `peak_rss` ≤ budget, cross-checked against heartbeat maxima.
+under the probe-chosen config (AC-A3b); each shard immutable `.npy` + manifest
+(AC-A6); peak (whole-cgroup) within the enforced budget (AC-A3).
+*Oracle:* probe passes; full N completes **or** probe refuses with numbers (both
+pass DoD); mid-encode kill resumes at shard boundary; cgroup peak ≤ budget.
 
-**AC-B3 — retrieve: declared ANN + baseline subtraction + two recalls.** Retrieval
-is the **declared** `retrieval.algorithm` (heuristic ANN unless explicitly exact),
-bound by the frozen `embedding`/`retrieval` blocks. Novelty is **set subtraction
-against the frozen mechanical baseline**, not proxy predicates:
+**AC-B3 — retrieve: control-recall THEN baseline subtraction; correct recall
+oracle.** The order is mandatory and produces **two separate artifacts**:
 ```
-novel_to_baseline(p) := cross_event(p)  AND  pair_id(p) ∉ frozen_mechanical_baseline_pair_set
+1. ANN raw top-k neighbors over the frozen corpus
+2. retrieval_control_evaluation:                    # BEFORE subtraction
+   - computational_recall = compare approx top-k to EXACT neighbors of a fixed
+     seeded set of m query contracts against all N vectors   # O(m·N), small m
+   - relation_control_recall = held-out known-positive recovery within top-k
+3. canonicalize + deduplicate (canonical directed→undirected pair id)
+4. subtract frozen mechanical baseline:
+     novel(p) := cross_event(p) AND pair_id(p) ∉ frozen_baseline_pair_set
+5. emit novel_candidate_manifest
 ```
-(The old three predicates — same-event / same-ladder / ≥2-shared-entities — remain
-only as **descriptive features in the manifest**, never as the definition.)
-Two required measurements:
-1. **Computational recall** — approximate-kNN vs **exact**-kNN on a bounded seeded
-   sample (quantifies what the ANN misses).
-2. **Relation-bearing recall** — fraction of hidden known-positive related pairs
-   recovered within top-k.
-*Oracle:* every emitted pair satisfies `novel_to_baseline`; the receipt records
-both recall numbers, `k`, seed, and the full `retrieval` block; if `algorithm` is
-exact, the probe must have proven it non-quadratic in wall-clock at N, else it is
-refused.
+Control recall is measured on the **raw** neighbor set (step 2), **before**
+subtraction — otherwise the controls (baskets/ladders, themselves baseline
+members) are removed by construction and recall reads 0 spuriously.
+
+**Relation-bearing recall is defined precisely:** denominator = held-out
+known-positive pairs whose **both** members survive the clean-binary filter;
+a positive counts as recovered iff its **exact counterpart** appears within top-k
+of **either** member (direction-symmetric); controls used for calibration are
+**excluded** from the reported held-out denominator.
+
+The old three predicates (same-event / same-ladder / ≥2-shared-entities) are
+**descriptive features in the manifest only**, never the novelty definition.
+**Removed** (mathematically invalid): the prior "if exact, prove non-quadratic in
+wall-clock" clause. Exact retrieval is used **only** as the bounded `O(m·N)`
+reference in step 2; full-corpus exact all-query is out of scope.
+*Oracle:* every emitted pair satisfies `novel`; receipt records both recall numbers
++ `m`, `k`, seed, full `retrieval` block; `retrieval_control_evaluation` and
+`novel_candidate_manifest` are distinct artifacts with distinct digests.
 
 ---
 
 ## Sub C — Emit + receipt (the δ handoff)
 
-**AC-C1 — Strict blinded allowlist.** `classification_input.jsonl` contains **only**:
-```yaml
-pair_id:
-a: {contract_id, title, description, normative_rules, resolution_source,
-    temporal_fields, void_conditions, settlement_domain,
-    text_digest, text_observed_at, version_basis, historical_discoverability: not_established}
-b: { ...same... }
-```
-It **excludes**: similarity, neighbor rank, retrieval channel, candidate reason,
-batch stratum, baseline membership, known-positive status, prices, volume,
-outcome, resolver result. Those live in `evaluation_manifest.jsonl`.
-**"Ground truth" exists only for controls** — a novel candidate does not acquire
-ground truth merely because a manifest row exists; it requires downstream
-adjudication.
-*Oracle:* diff the classifier-input schema against the allowlist → no extra field;
-grep for price/volume/rank/score/stratum in the classifier input → none.
+**AC-C1 — Strict blinded classifier allowlist.** `classification_input.jsonl`
+contains **only** `pair_id` + per side `{contract_id, title, description,
+normative_rules, resolution_source, temporal_fields, void_conditions,
+settlement_domain, text_digest, text_observed_at, version_basis,
+historical_discoverability: not_established}`. **Excludes** similarity, rank,
+retrieval channel, candidate reason, stratum, baseline membership, known-positive
+status, prices, volume, outcome, resolver result — those live in
+`evaluation_manifest.jsonl`. **"Ground truth" exists only for controls**; a novel
+candidate does not acquire ground truth from a manifest row.
+*Oracle:* recursive JSON-key validation of the classifier input against the
+allowlist → no extra key (not string-grep).
 
-**AC-C2 — Bounded output: full manifest vs review fixture.** Distinguish:
-- **full candidate manifest** — box-side derived artifact, **not committed to
-  Git**, digested.
-- **bounded review fixture** — deterministic stratified sample, small enough to
-  track and classify.
-Specify + record: canonical **pair deduplication**, **max candidates per
-contract**, **semantic bands**, **deterministic selection seed**, **review fixture
-size**, artifact **location + digest**. (At N≈222,855, even k=20 is millions of
-directed neighbor records before dedup — the manifest is bounded by construction,
-the fixture by selection.)
-*Oracle:* fixture size = declared; selection is reproducible from the seed; the
-full manifest is referenced by digest, absent from Git.
+**AC-C2 — Bounded output: full manifest vs review fixture.**
+- **full candidate manifest** — box-side, **not committed to Git**, digested.
+- **bounded review fixture** — deterministic stratified sample, small.
+Specify + record: canonical pair dedup, max candidates per contract, semantic
+bands, deterministic selection seed, review fixture size, artifact location+digest.
+*Oracle:* fixture size = declared; selection reproducible from seed; full manifest
+referenced by digest, absent from Git.
 
-**AC-C3 — Receipt complete + status matrix (L5/L6).** The receipt is reproducible
-and interpretable, not a bag of booleans:
+**AC-C3 — Receipt complete; two status axes; L5/L6 measurable.** The receipt is
+reproducible + interpretable:
 ```yaml
-run_id:
-mode:            sample(N) | full
-git_sha:
-catalog_digest:
-input_selection_digest:
-clean_binary_predicate_digest:
-corpus_manifest_digest:
-embedding_model: {id, revision, dimension, dtype, input_template_digest}
-retrieval:       {algorithm, implementation_version, metric, k, parameters, seed, search_claim}
-mechanical_baseline_digest:
+run_id: · mode: · git_sha: · catalog_digest: · schema_version:
+corpus_manifest_digest: · clean_binary_predicate_digest: · input_selection_digest:
+retrieval_input_digest: · embedding_model: {id, revision, dimension, dtype, input_template_digest}
+retrieval: {algorithm, implementation_version, metric, k, parameters, seed, search_claim}
+embedding_and_index_digest: · mechanical_baseline_digest: · control_split_digest:
 classification_fixture_selection_digest:
-outputs:         [{name, path, rows, digest}]
-probe:
-  measured:      {nproc, mem_available_mb, sample_n, peak_rss_mb, rows_per_s, chosen_workers, chosen_threads}
-  projected_full:{peak_rss_mb, wall_clock_min}
-  verdict:       pass | refuse
-  reason:
-recall:          {computational, relation_bearing}
+effective_capacity: {memory_max_mb, memory_available_at_probe_mb, cpu_quota, cpuset}
+probe: {measured:{sample_n, peak_cgroup_mem_mb, rows_per_s, chosen_workers, chosen_threads, chosen_batch},
+        projected_full:{peak_cgroup_mem_mb, wall_clock_min}, verdict: pass|refuse, reason}
+recall: {computational, relation_control}          # from retrieval_control_evaluation
+instrument_gates: {computational_recall_gate: pass|fail, relation_control_recall_gate: pass|fail}
+novel_relation_yield:                              # measured result, not a gate
+outputs: [{name, path, rows, digest}]
 remote_state_sink: refs/heads/slicer-status/<run_id>
-heartbeat_policy: {cadence_s, stale_after_s, seq_final}
-run_state_digest:
-resources:       {peak_rss_mb, wall_clock_s, shards_done, shards_total}
-invariants_self_check:            # asserted AND cross-checkable vs heartbeat/manifests
-  measured_before_scale: bool
-  resumable:             bool
-  observable:            bool
-  memory_bounded:        bool
-  errors_surfaced:       bool
-  failure_is_cheap:      bool     # L6 — was missing
-failure_cost:                     # L6 measurable oracle
-  probe_wall_clock_s:
-  rows_processed_before_refusal:
-  max_recomputed_shards_after_kill:
-  max_uncheckpointed_work_s:
-status:          done | refused | partial | failed
-resume_point:
-notes:
+heartbeat_policy: {cadence_s, stale_after_s, seq_final, roundtrip_verified: bool}
+resources: {cgroup_memory_peak_mb, wall_clock_s, shards_done, shards_total}
+invariants_self_check: {measured_before_scale, resumable, observable, memory_bounded,
+                        errors_surfaced, failure_is_cheap}   # all cross-checkable
+failure_cost: {probe_wall_clock_s, rows_processed_before_refusal,
+               max_recomputed_shards_after_kill, max_uncheckpointed_work_s}
+# ---- two status axes ----
+instrument_status:      accepted | rejected
+full_discovery_status:  completed | capacity_refused | observability_refused | frozen_inputs_refused | not_run
+refusal_gate:           capacity | observability | frozen_inputs | catalog | null
+resume_point: · run_state_digest: · notes:
 ```
-**L5 oracle (explicit):** an injected error mid-stage produces a surfaced,
-classified error in the heartbeat + receipt (`errors_surfaced=true`), never a
-silent skip.
-**δ status matrix (precise):**
-- `done` — accept **only** if all required outputs+digests verify.
-- `refused` — accept **only** if a predeclared probe guard refused **before**
-  expensive work.
-- `partial` — resumable intermediate; **never** accepted as Definition of Done.
-- `failed` — reject.
-"Receipt alone" means **receipt + its immutable content-addressed references**, not
-unaudited self-assertions.
+**L5 oracle (explicit):** an injected mid-stage error surfaces a classified error
+in heartbeat + receipt (`errors_surfaced=true`), never a silent skip.
+**δ acceptance:** `instrument_status: accepted` iff outputs+digests verify **and
+both instrument gates pass**. `full_discovery_status` is orthogonal — a
+`capacity_refused` run can be `instrument_status: accepted` (L1 proven) while the
+census is **not** done and the central question stays underdetermined. `partial`
+is never a DoD. "Receipt alone" = receipt + its content-addressed references.
 
 ---
 
 ## Definition of done (master)
-- A, B, C accepted; a `mode=sample` dispatch emits blinded fixtures + attrition
-  receipt + recall numbers with a green receipt.
-- A `mode=full` dispatch either completes 222,855 in one pass **or** the probe
-  refuses with numbers — both pass (L1).
-- Each of L1–L6 has an AC + oracle; `failure_is_cheap` is measured, not asserted.
-- Retrieval is fully bound (frozen `embedding`/`retrieval` blocks + `search_claim`);
-  novelty is baseline-subtraction; both recalls are reported.
-- The runner-cell needs no persistent box-agent and no always-on ω.
+- A, B, C accepted; `mode=sample` emits blinded fixtures + attrition receipt +
+  both recall numbers with `instrument_status: accepted`.
+- A `mode=full` dispatch is `instrument_status: accepted` when either
+  `full_discovery_status: completed` **or** a predeclared gate refused with numbers
+  — but the two axes are reported separately (L1 proven ≠ census done).
+- Each L1–L6 has an AC+oracle; `failure_is_cheap` measured via `failure_cost`.
+- Retrieval preregistered (calibration/held-out); config frozen before held-out
+  eval; both instrument gates evaluated; novelty = baseline subtraction.
+- Acceptance language binds **the measured clean-binary N** (to `corpus_manifest`
+  + `clean_binary_predicate` digests); **≈222,855 is an expected sanity value
+  only**, not a hardcoded requirement.
 
-## What this deliberately does NOT establish (known debt)
-- That non-retrieved relations do not exist (heuristic search cannot prove absence).
-- That any candidate is an *identified relation* or a *tradeable incoherence* —
-  that is downstream (classification → atlas → law → price LP → witness).
-- Exact-retrieval feasibility at full N (bound by the probe; exact mode is refused
-  if quadratic wall-clock is projected).
+## Known debt (what this does NOT establish)
+Non-existence of non-retrieved relations (heuristic can't prove absence) · that any
+candidate is an identified relation or tradeable incoherence (downstream) ·
+full-corpus exact retrieval (out of scope) · that the semantic-retrieval census was
+performed when a run safely refuses (`full_discovery_status ≠ completed`).
+
+## Provenance
+```yaml
+source_artifacts_sha:  # commit where RCA + design + this issue are all committed
+bundle_commit_sha:     # commit where the review bundle itself landed
+```
+(These disambiguate the two SHAs the prior bundle header conflated.)
