@@ -28,7 +28,7 @@
       7
     ],
     "measured_recomputed_shards": 0,
-    "measured_max_shard_work_s": 0.061,
+    "measured_max_shard_work_s": 0.045,
     "resumed_not_restarted": true
   }
 }

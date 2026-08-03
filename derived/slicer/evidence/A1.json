@@ -11,11 +11,11 @@
     "write_msg": "read-only catalog input '/opt/actions-runner/_work/cmp/cmp/slicer/catalog.json': write refused",
     "stage_output_root": "/opt/actions-runner/_work/_temp/slicer-state/shards",
     "stage_wrote_files": [
-      "4a8095ee31135e6f/exec_ledger.jsonl",
-      "4a8095ee31135e6f/key.json",
-      "4a8095ee31135e6f/shard-00000.bin",
-      "4a8095ee31135e6f/completed.jsonl",
-      "4a8095ee31135e6f/shard-00001.bin"
+      "4ad70490145d8283/exec_ledger.jsonl",
+      "4ad70490145d8283/key.json",
+      "4ad70490145d8283/shard-00000.bin",
+      "4ad70490145d8283/completed.jsonl",
+      "4ad70490145d8283/shard-00001.bin"
     ],
     "wrote_outside_catalog_root": []
   }

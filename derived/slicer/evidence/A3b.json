@@ -4,42 +4,42 @@
   "passed": true,
   "evidence": {
     "effective_cpu": 8,
-    "admission_mem_mb": 8041,
+    "admission_mem_mb": 8039,
     "measured_candidates": [
       {
         "workers": 1,
         "threads_per_worker": 1,
         "batch": 32,
-        "rows_per_s": 29301.1,
+        "rows_per_s": 33095.7,
         "peak_rss_mb": 19,
-        "wall_s": 0.137,
+        "wall_s": 0.121,
         "feasible": true
       },
       {
         "workers": 2,
         "threads_per_worker": 1,
         "batch": 64,
-        "rows_per_s": 57144.1,
+        "rows_per_s": 63163.3,
         "peak_rss_mb": 39,
-        "wall_s": 0.14,
+        "wall_s": 0.127,
         "feasible": true
       },
       {
         "workers": 4,
         "threads_per_worker": 2,
         "batch": 128,
-        "rows_per_s": 100814.5,
+        "rows_per_s": 125453.3,
         "peak_rss_mb": 78,
-        "wall_s": 0.159,
+        "wall_s": 0.128,
         "feasible": true
       },
       {
         "workers": 8,
         "threads_per_worker": 1,
         "batch": 256,
-        "rows_per_s": 197858.8,
+        "rows_per_s": 231589.2,
         "peak_rss_mb": 157,
-        "wall_s": 0.162,
+        "wall_s": 0.138,
         "feasible": true
       }
     ],

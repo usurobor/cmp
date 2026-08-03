@@ -2,38 +2,38 @@
   "schema": "slicer-sub-a-receipt/2.3",
   "sub": "A",
   "issue_contract": "slicer v2.2 @ 792f65d",
-  "run_id": "30782795424",
-  "git_sha": "9423bda325c143da0106b56fa1fbb622c3c2be1d",
-  "generated_at": "2026-08-03T03:50:41Z",
+  "run_id": "30782954297",
+  "git_sha": "51585a70115c282b476dd5359bfaae6b6684361c",
+  "generated_at": "2026-08-03T03:54:27Z",
   "mode": "sub_a_synthetic",
   "catalog_digest": "cf293490f6a95748",
   "effective_capacity": {
     "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
-    "host_mem_available_mb": 15297,
+    "host_mem_available_mb": 15315,
     "memory_high_mb": 10240,
     "memory_max_mb": 12288,
-    "memory_current_mb": 188,
+    "memory_current_mb": 191,
     "memory_peak_mb": 457,
     "swap_max_mb": null,
     "swap_current_mb": 0,
     "cpuset_count": 8,
     "quota_cores": null,
     "effective_cpu": 8,
-    "raw_available_mem_mb": 10052,
+    "raw_available_mem_mb": 10049,
     "safety_factor": 0.8,
-    "admission_mem_mb": 8041,
-    "memory_peak_delta_mb": 244
+    "admission_mem_mb": 8039,
+    "memory_peak_delta_mb": 0
   },
   "probe": {
-    "rows_per_s": 18.2,
+    "rows_per_s": 25.7,
     "projected_full_n": 222855,
     "projected_peak_mb": 286.9,
-    "projected_wall_min": 204.22,
-    "mem_budget_mb": 8041,
+    "projected_wall_min": 144.4,
+    "mem_budget_mb": 8039,
     "wall_budget_min": 120.0,
     "verdict": "refuse",
     "reason": "projected>budget",
-    "probe_wall_clock_s": 0.11,
+    "probe_wall_clock_s": 0.078,
     "rows_processed": 2
   },
   "oracles": [
@@ -45,19 +45,19 @@
         "initial_roundtrip": {
           "verified": true,
           "fetched": {
-            "at": "2026-08-03T03:50:32Z",
+            "at": "2026-08-03T03:54:19Z",
             "heartbeat_seq": 1,
-            "run_id": "30782795424",
+            "run_id": "30782954297",
             "stage": "spine-init",
             "status": "alive"
           },
-          "fetched_digest": "4b098321e784b70b5d3197646c640708963f935a8539da4a9eeaacfa33d02d8c",
-          "expected_digest": "4b098321e784b70b5d3197646c640708963f935a8539da4a9eeaacfa33d02d8c",
+          "fetched_digest": "d00f7b56985b2c647651c4dd28d0e551480e8e842d2b2c3fdfd0294c8e472711",
+          "expected_digest": "d00f7b56985b2c647651c4dd28d0e551480e8e842d2b2c3fdfd0294c8e472711",
           "run_id_match": true,
           "seq_match": true
         },
         "seq_incremented": true,
-        "ref": "refs/heads/slicer-status/30782795424"
+        "ref": "refs/heads/slicer-status/30782954297"
       }
     },
     {
@@ -73,11 +73,11 @@
         "write_msg": "read-only catalog input '/opt/actions-runner/_work/cmp/cmp/slicer/catalog.json': write refused",
         "stage_output_root": "/opt/actions-runner/_work/_temp/slicer-state/shards",
         "stage_wrote_files": [
-          "4a8095ee31135e6f/exec_ledger.jsonl",
-          "4a8095ee31135e6f/key.json",
-          "4a8095ee31135e6f/shard-00000.bin",
-          "4a8095ee31135e6f/completed.jsonl",
-          "4a8095ee31135e6f/shard-00001.bin"
+          "4ad70490145d8283/exec_ledger.jsonl",
+          "4ad70490145d8283/key.json",
+          "4ad70490145d8283/shard-00000.bin",
+          "4ad70490145d8283/completed.jsonl",
+          "4ad70490145d8283/shard-00001.bin"
         ],
         "wrote_outside_catalog_root": []
       }
@@ -89,20 +89,20 @@
       "evidence": {
         "effective_capacity": {
           "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
-          "host_mem_available_mb": 15297,
+          "host_mem_available_mb": 15315,
           "memory_high_mb": 10240,
           "memory_max_mb": 12288,
-          "memory_current_mb": 188,
+          "memory_current_mb": 191,
           "memory_peak_mb": 457,
           "swap_max_mb": null,
           "swap_current_mb": 0,
           "cpuset_count": 8,
           "quota_cores": null,
           "effective_cpu": 8,
-          "raw_available_mem_mb": 10052,
+          "raw_available_mem_mb": 10049,
           "safety_factor": 0.8,
-          "admission_mem_mb": 8041,
-          "memory_peak_delta_mb": 244
+          "admission_mem_mb": 8039,
+          "memory_peak_delta_mb": 0
         },
         "safety_factor_applied": true,
         "cgroup_effective_derived": true
@@ -114,42 +114,42 @@
       "passed": true,
       "evidence": {
         "effective_cpu": 8,
-        "admission_mem_mb": 8041,
+        "admission_mem_mb": 8039,
         "measured_candidates": [
           {
             "workers": 1,
             "threads_per_worker": 1,
             "batch": 32,
-            "rows_per_s": 29301.1,
+            "rows_per_s": 33095.7,
             "peak_rss_mb": 19,
-            "wall_s": 0.137,
+            "wall_s": 0.121,
             "feasible": true
           },
           {
             "workers": 2,
             "threads_per_worker": 1,
             "batch": 64,
-            "rows_per_s": 57144.1,
+            "rows_per_s": 63163.3,
             "peak_rss_mb": 39,
-            "wall_s": 0.14,
+            "wall_s": 0.127,
             "feasible": true
           },
           {
             "workers": 4,
             "threads_per_worker": 2,
             "batch": 128,
-            "rows_per_s": 100814.5,
+            "rows_per_s": 125453.3,
             "peak_rss_mb": 78,
-            "wall_s": 0.159,
+            "wall_s": 0.128,
             "feasible": true
           },
           {
             "workers": 8,
             "threads_per_worker": 1,
             "batch": 256,
-            "rows_per_s": 197858.8,
+            "rows_per_s": 231589.2,
             "peak_rss_mb": 157,
-            "wall_s": 0.162,
+            "wall_s": 0.138,
             "feasible": true
           }
         ],
@@ -171,8 +171,8 @@
       "name": "scientific-param identity vs execution-partition variance",
       "passed": true,
       "evidence": {
-        "exec_partition_x": "5528bfe0ec3a1f8a",
-        "exec_partition_y": "f76f38e35ffaee92",
+        "exec_partition_x": "8b6dc89d0329fd78",
+        "exec_partition_y": "7dbe564ebcc5aed4",
         "same_scientific_identical_outputs": true,
         "scientific_digest_const": "a9553e38da9e4156",
         "scientific_digest_changed": "f5f07a9bff9eaa5a",
@@ -198,8 +198,8 @@
           2
         ],
         "changed_key_reran": true,
-        "key_v1": "a1e85e1d0e4e32af",
-        "key_v2": "b1ac90b33d85a3dc",
+        "key_v1": "6bd94314fde76115",
+        "key_v2": "24cc98224ea62c73",
         "stray_tmp_not_counted": true,
         "truncated_manifest_recovered": true,
         "key_components": [
@@ -218,10 +218,10 @@
       "passed": true,
       "evidence": {
         "forced_budget_probe": {
-          "rows_per_s": 1394.2,
+          "rows_per_s": 1512.6,
           "projected_full_n": 222855,
           "projected_peak_mb": 286.9,
-          "projected_wall_min": 2.66,
+          "projected_wall_min": 2.46,
           "mem_budget_mb": 1,
           "wall_budget_min": 120.0,
           "verdict": "refuse",
@@ -253,19 +253,20 @@
     },
     {
       "ac": "A3.swap",
-      "name": "operational swap/RSS monitor terminates over bound threshold",
-      "passed": false,
+      "name": "swap-policy enforcement: RSS-growth monitor preempts swap (real termination)",
+      "passed": true,
       "evidence": {
         "swap_max_mb": null,
         "swap_current_mb": 0,
-        "mode": "monitor_and_terminate_on_swap",
-        "monitored_metric": "VmSwap",
+        "mode": "rss_guard_preempts_swap",
+        "monitored_metric": "VmRSS",
         "threshold_mb": 96,
-        "observed_peak_mb": 0,
-        "child_killed_by_monitor": false,
-        "child_returncode": 0,
-        "child_killed_signal": null,
-        "note": "an installed sampler thread terminated a real child over the bound threshold"
+        "observed_peak_rss_mb": 97,
+        "child_killed_by_monitor": true,
+        "child_returncode": -9,
+        "child_killed_signal": 9,
+        "swap_current_bounded": true,
+        "note": "installed sampler thread SIGKILLs the child over a bound RSS threshold, preempting swap growth; swap.current observed and bounded"
       }
     },
     {
@@ -298,7 +299,7 @@
           7
         ],
         "measured_recomputed_shards": 0,
-        "measured_max_shard_work_s": 0.061,
+        "measured_max_shard_work_s": 0.045,
         "resumed_not_restarted": true
       }
     },
@@ -312,17 +313,17 @@
         "error_heartbeat_roundtrip": {
           "verified": true,
           "fetched": {
-            "at": "2026-08-03T03:50:40Z",
+            "at": "2026-08-03T03:54:26Z",
             "error_class": "injected",
             "heartbeat_seq": 500,
             "message": "injected error at shard 2",
-            "run_id": "30782795424",
+            "run_id": "30782954297",
             "shard": 2,
             "stage": "err",
             "status": "error"
           },
-          "fetched_digest": "9ab25c7bf019ba2e874674dce477270d48356096bce9f00ca2c1cb1cc03e6b7a",
-          "expected_digest": "9ab25c7bf019ba2e874674dce477270d48356096bce9f00ca2c1cb1cc03e6b7a",
+          "fetched_digest": "3fba3c2707740757193bb130cb98e0c0ee141e7e056aedfad45b7316f243a800",
+          "expected_digest": "3fba3c2707740757193bb130cb98e0c0ee141e7e056aedfad45b7316f243a800",
           "run_id_match": true,
           "seq_match": true
         },
@@ -381,10 +382,10 @@
         "offending_workflows": [],
         "runtime_api_check": {
           "available": true,
-          "status_branch": "slicer-status/30782795424",
+          "status_branch": "slicer-status/30782954297",
           "runs_triggered_by_status_ref": 0,
           "passed": true,
-          "checked_at": "2026-08-03T03:50:41Z"
+          "checked_at": "2026-08-03T03:54:27Z"
         }
       }
     }
@@ -398,30 +399,30 @@
     "failure_is_cheap": true
   },
   "failure_cost": {
-    "probe_wall_clock_s": 0.11,
+    "probe_wall_clock_s": 0.078,
     "rows_processed_before_refusal": 2,
     "measured_recomputed_shards_after_kill": 0,
-    "measured_max_uncheckpointed_work_s": 0.061
+    "measured_max_uncheckpointed_work_s": 0.045
   },
   "execution_status": "completed",
-  "contract_status": "rejected",
+  "contract_status": "accepted",
   "retrieval_instrument_status": "not_evaluated",
   "discovery_status": "not_run",
   "prerequisite_receipts": [],
-  "remote_state_sink": "refs/heads/slicer-status/30782795424",
+  "remote_state_sink": "refs/heads/slicer-status/30782954297",
   "notes": "Sub A only \u2014 synthetic long stage; no model/corpus/ANN/retrieval.",
   "terminal_heartbeat": {
     "verified": true,
     "fetched": {
-      "at": "2026-08-03T03:50:41Z",
-      "contract_status": "rejected",
+      "at": "2026-08-03T03:54:27Z",
+      "contract_status": "accepted",
       "heartbeat_seq": 999,
-      "run_id": "30782795424",
+      "run_id": "30782954297",
       "stage": "sub-a-done",
       "status": "completed"
     },
-    "fetched_digest": "6c1db9688f0b036ec2571354cd9743985e0310a96854c6d6413d3c893e953e03",
-    "expected_digest": "6c1db9688f0b036ec2571354cd9743985e0310a96854c6d6413d3c893e953e03",
+    "fetched_digest": "8694b303deb1a9fc159909bf5b1ac64bd40731b595567de535b792a7a8461cad",
+    "expected_digest": "8694b303deb1a9fc159909bf5b1ac64bd40731b595567de535b792a7a8461cad",
     "run_id_match": true,
     "seq_match": true
   },
@@ -429,43 +430,43 @@
     {
       "ac": "A4.heartbeat",
       "file": "evidence/A4_heartbeat.json",
-      "sha256": "6b4c1044f33b2780c8560f07c7071daebf1a4306eed31a2d30445be96edb1642",
+      "sha256": "7928d9e3ebdffe0d77c56b05c2a09e07575c3f3158e86673b1cd41597f68307f",
       "passed": true
     },
     {
       "ac": "A1",
       "file": "evidence/A1.json",
-      "sha256": "4129a1482af26804d0303abe1bbd38e4a308a0ed6bec37a0481671665f56971a",
+      "sha256": "d1d19fa1c4f02e0ad6fff91da4edb1227ad45056f61d7bb29155d0c883cb3ee7",
       "passed": true
     },
     {
       "ac": "A3.measure",
       "file": "evidence/A3_measure.json",
-      "sha256": "0f5a0abfe22555963b5972313769e04a221e83f3addbf48d5a0196739fb5d8a9",
+      "sha256": "de53da415f09945322443bb6ba1e12ead4293dbf3265746653284832a63b28fe",
       "passed": true
     },
     {
       "ac": "A3b",
       "file": "evidence/A3b.json",
-      "sha256": "ed91ee4387342dc21f4013d15c92e668deea59cc58e3cfa7ffa8278528bbeff2",
+      "sha256": "34c208db8ceb917ffce328ac92c2636ff3c13709af52c6b21ae2a2912de6ae89",
       "passed": true
     },
     {
       "ac": "A5",
       "file": "evidence/A5.json",
-      "sha256": "75e6123ca656d76fd0229d86c60dffc4f456f421623a9c44fd0ce33664e7800e",
+      "sha256": "cecc798e46073efbd22c4f2f126154724b6e599ecf8e61494f93a3fd47623a57",
       "passed": true
     },
     {
       "ac": "A2",
       "file": "evidence/A2.json",
-      "sha256": "142a1d64344c7e1925278076dc8a7071964a0ab88adde465da30239d7a5740a9",
+      "sha256": "1f8cac54685176ed3676a018bea4b063351f76c8a8cf41e45c5913e5856131ce",
       "passed": true
     },
     {
       "ac": "A3.refuse",
       "file": "evidence/A3_refuse.json",
-      "sha256": "f67209f34de8a8c4359d0f22b51cfdccc90cda2434dfb7cde189e6b0c5845ce2",
+      "sha256": "f16956c5c195d626b62176912e58621c5556b749875e399064c3ceb3b5171838",
       "passed": true
     },
     {
@@ -477,25 +478,25 @@
     {
       "ac": "A3.swap",
       "file": "evidence/A3_swap.json",
-      "sha256": "aad420be0bff81512fc4521b0df0f63429c8806eb8c0e80c99adb47d450990f3",
-      "passed": false
+      "sha256": "624112f4f501de98a426c128898fe43c7398607e0be34526bcfbacb7a4a60ba1",
+      "passed": true
     },
     {
       "ac": "A6",
       "file": "evidence/A6.json",
-      "sha256": "a39b20155bbb2fce65fd063c3e29aa6097cfc85a01bf54352af073bca757085c",
+      "sha256": "842bed6657a43b20537d5408cd7e6604096426440e68ad3b35f7bbc33f489886",
       "passed": true
     },
     {
       "ac": "A7",
       "file": "evidence/A7.json",
-      "sha256": "49e4ad74226c69610fb4e3b7a50c1db2c4ed2258cfedf6cf2c62a8edc099e12c",
+      "sha256": "caf540a7489bad7340025b48e2e20849f18edfc274fc8cc4dd08d1ef469bfeaa",
       "passed": true
     },
     {
       "ac": "A4.no-trigger",
       "file": "evidence/A4_no-trigger.json",
-      "sha256": "083ba7442b268b06ce893607b050ab34477949cb1dff2dffe137f208b0864061",
+      "sha256": "279bd4ed01d12e049bf6951acc43d4390c9ec198ff66c407f6248b604cb40a45",
       "passed": true
     }
   ]

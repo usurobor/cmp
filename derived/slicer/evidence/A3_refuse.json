@@ -4,10 +4,10 @@
   "passed": true,
   "evidence": {
     "forced_budget_probe": {
-      "rows_per_s": 1394.2,
+      "rows_per_s": 1512.6,
       "projected_full_n": 222855,
       "projected_peak_mb": 286.9,
-      "projected_wall_min": 2.66,
+      "projected_wall_min": 2.46,
       "mem_budget_mb": 1,
       "wall_budget_min": 120.0,
       "verdict": "refuse",

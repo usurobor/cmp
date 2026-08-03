@@ -8,17 +8,17 @@
     "error_heartbeat_roundtrip": {
       "verified": true,
       "fetched": {
-        "at": "2026-08-03T03:50:40Z",
+        "at": "2026-08-03T03:54:26Z",
         "error_class": "injected",
         "heartbeat_seq": 500,
         "message": "injected error at shard 2",
-        "run_id": "30782795424",
+        "run_id": "30782954297",
         "shard": 2,
         "stage": "err",
         "status": "error"
       },
-      "fetched_digest": "9ab25c7bf019ba2e874674dce477270d48356096bce9f00ca2c1cb1cc03e6b7a",
-      "expected_digest": "9ab25c7bf019ba2e874674dce477270d48356096bce9f00ca2c1cb1cc03e6b7a",
+      "fetched_digest": "3fba3c2707740757193bb130cb98e0c0ee141e7e056aedfad45b7316f243a800",
+      "expected_digest": "3fba3c2707740757193bb130cb98e0c0ee141e7e056aedfad45b7316f243a800",
       "run_id_match": true,
       "seq_match": true
     },

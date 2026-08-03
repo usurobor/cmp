@@ -6,18 +6,18 @@
     "initial_roundtrip": {
       "verified": true,
       "fetched": {
-        "at": "2026-08-03T03:50:32Z",
+        "at": "2026-08-03T03:54:19Z",
         "heartbeat_seq": 1,
-        "run_id": "30782795424",
+        "run_id": "30782954297",
         "stage": "spine-init",
         "status": "alive"
       },
-      "fetched_digest": "4b098321e784b70b5d3197646c640708963f935a8539da4a9eeaacfa33d02d8c",
-      "expected_digest": "4b098321e784b70b5d3197646c640708963f935a8539da4a9eeaacfa33d02d8c",
+      "fetched_digest": "d00f7b56985b2c647651c4dd28d0e551480e8e842d2b2c3fdfd0294c8e472711",
+      "expected_digest": "d00f7b56985b2c647651c4dd28d0e551480e8e842d2b2c3fdfd0294c8e472711",
       "run_id_match": true,
       "seq_match": true
     },
     "seq_incremented": true,
-    "ref": "refs/heads/slicer-status/30782795424"
+    "ref": "refs/heads/slicer-status/30782954297"
   }
 }
