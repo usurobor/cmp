@@ -1,0 +1,26 @@
+{
+  "ac": "A2",
+  "name": "idempotent skip on complete verified key + partial-write",
+  "passed": true,
+  "evidence": {
+    "first_run_completed": [
+      0,
+      1,
+      2
+    ],
+    "rerun_zero_work": true,
+    "stray_tmp_not_counted": true,
+    "key_binds_impl_version": true,
+    "key_components": [
+      "input_digest",
+      "params_digest",
+      "git_sha",
+      "stage_impl_version",
+      "catalog_digest",
+      "schema_version",
+      "embedding_model_revision",
+      "seed",
+      "dep_lock_digest"
+    ]
+  }
+}

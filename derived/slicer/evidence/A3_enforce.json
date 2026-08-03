@@ -1,0 +1,11 @@
+{
+  "ac": "A3.enforce",
+  "name": "over-budget killed in isolated child; daemon safe",
+  "passed": true,
+  "evidence": {
+    "child_returncode": 42,
+    "child_stderr_tail": "over-budget child: MemoryError (cap enforced)",
+    "parent_survived": true,
+    "enforcement": "process RLIMIT_AS on isolated child (does not touch runner daemon)"
+  }
+}

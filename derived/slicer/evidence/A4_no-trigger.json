@@ -1,0 +1,52 @@
+{
+  "ac": "A4.no-trigger",
+  "name": "slicer-status/** triggers no workflow",
+  "passed": true,
+  "evidence": {
+    "sample_ref": "slicer-status/deadbeef",
+    "workflows": {
+      "exp001-batch.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-collect.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-embed.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-inspect.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-probe.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-relations.yml": {
+        "has_push": false,
+        "branches": []
+      },
+      "slicer-sub-a.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      }
+    },
+    "offending_workflows": [],
+    "note": "static: does any push-branches glob match slicer-status/*? \u03b4 confirms via Actions API post-run"
+  }
+}

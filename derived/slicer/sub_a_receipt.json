@@ -1,0 +1,311 @@
+{
+  "schema": "slicer-sub-a-receipt/2.2",
+  "sub": "A",
+  "issue_contract": "slicer v2.2 @ 792f65d",
+  "run_id": "30777927003",
+  "mode": "sub_a_synthetic",
+  "git_sha": "092cd65fcb7bbb3cd01022872798e707553314df",
+  "catalog_digest": "f0485b8bafb7221b",
+  "at": "2026-08-03T01:53:13Z",
+  "effective_capacity": {
+    "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
+    "host_mem_available_mb": 15296,
+    "memory_high_mb": 10240,
+    "memory_max_mb": 12288,
+    "memory_current_mb": 188,
+    "memory_peak_mb": 211,
+    "swap_max_mb": null,
+    "swap_current_mb": 0,
+    "cpuset_count": 8,
+    "quota_cores": null,
+    "effective_cpu": 8,
+    "available_mem_mb": 10052
+  },
+  "probe": {
+    "rows_per_s": 23.4,
+    "projected_full_n": 222855,
+    "projected_peak_mb": 286.9,
+    "projected_wall_min": 158.42,
+    "mem_budget_mb": 10052.0,
+    "wall_budget_min": 120.0,
+    "verdict": "refuse",
+    "reason": "projected>budget",
+    "probe_wall_clock_s": 0.085,
+    "rows_processed": 2
+  },
+  "oracles": [
+    {
+      "ac": "A1",
+      "name": "catalog governs I/O (truthful, not sandbox)",
+      "passed": true,
+      "evidence": {
+        "unregistered_refused": true,
+        "message": "catalog: unregistered output 'not_a_registered_dataset' \u2014 refusing to publish",
+        "read_only_enforced": true
+      }
+    },
+    {
+      "ac": "A3.measure",
+      "name": "cgroup-effective capacity measured",
+      "passed": true,
+      "evidence": {
+        "effective_capacity": {
+          "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
+          "host_mem_available_mb": 15296,
+          "memory_high_mb": 10240,
+          "memory_max_mb": 12288,
+          "memory_current_mb": 188,
+          "memory_peak_mb": 211,
+          "swap_max_mb": null,
+          "swap_current_mb": 0,
+          "cpuset_count": 8,
+          "quota_cores": null,
+          "effective_cpu": 8,
+          "available_mem_mb": 10052
+        },
+        "cgroup_effective_derived": true
+      }
+    },
+    {
+      "ac": "A3b",
+      "name": "probe-selected worker/thread/batch, no oversubscription",
+      "passed": true,
+      "evidence": {
+        "effective_cpu": 8,
+        "chosen": {
+          "workers": 8,
+          "threads_per_worker": 1,
+          "batch": 256
+        },
+        "candidates": [
+          [
+            1,
+            1,
+            32
+          ],
+          [
+            2,
+            1,
+            64
+          ],
+          [
+            4,
+            2,
+            128
+          ],
+          [
+            8,
+            1,
+            256
+          ]
+        ],
+        "no_oversubscription": true,
+        "thread_caps_set": {
+          "OMP_NUM_THREADS": "1",
+          "ORT_NUM_THREADS": "1"
+        }
+      }
+    },
+    {
+      "ac": "A4.heartbeat",
+      "name": "heartbeat publish + independent remote round-trip",
+      "passed": true,
+      "evidence": {
+        "initial_roundtrip": {
+          "verified": true,
+          "fetched_digest": "1a1612fb6ff0046463140959ab6f0325adb185ac1cc9331e6eda484f428095f8",
+          "expected_digest": "1a1612fb6ff0046463140959ab6f0325adb185ac1cc9331e6eda484f428095f8",
+          "run_id_match": true,
+          "seq_match": true
+        },
+        "seq_incremented": true,
+        "ref": "refs/heads/slicer-status/30777927003"
+      }
+    },
+    {
+      "ac": "A4.no-trigger",
+      "name": "slicer-status/** triggers no workflow",
+      "passed": true,
+      "evidence": {
+        "sample_ref": "slicer-status/deadbeef",
+        "workflows": {
+          "exp001-batch.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-collect.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-embed.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-inspect.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-probe.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-relations.yml": {
+            "has_push": false,
+            "branches": []
+          },
+          "slicer-sub-a.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          }
+        },
+        "offending_workflows": [],
+        "note": "static: does any push-branches glob match slicer-status/*? \u03b4 confirms via Actions API post-run"
+      }
+    },
+    {
+      "ac": "A3.refuse",
+      "name": "capacity refusal before expensive work (with numbers)",
+      "passed": true,
+      "evidence": {
+        "forced_budget_probe": {
+          "rows_per_s": 22.5,
+          "projected_full_n": 222855,
+          "projected_peak_mb": 286.9,
+          "projected_wall_min": 165.02,
+          "mem_budget_mb": 1.0,
+          "wall_budget_min": 120.0,
+          "verdict": "refuse",
+          "reason": "projected>budget",
+          "probe_wall_clock_s": 0.089,
+          "rows_processed": 2
+        }
+      }
+    },
+    {
+      "ac": "A3.enforce",
+      "name": "over-budget killed in isolated child; daemon safe",
+      "passed": true,
+      "evidence": {
+        "child_returncode": 42,
+        "child_stderr_tail": "over-budget child: MemoryError (cap enforced)",
+        "parent_survived": true,
+        "enforcement": "process RLIMIT_AS on isolated child (does not touch runner daemon)"
+      }
+    },
+    {
+      "ac": "A3.swap",
+      "name": "swap policy bound + observable (or child-AS-capped)",
+      "passed": true,
+      "evidence": {
+        "swap_max_mb": null,
+        "swap_current_mb": 0,
+        "mode": "monitor_and_terminate",
+        "swap_at_probe_mb": 0,
+        "monitor_logic_terminates_over_threshold": true,
+        "monitor_logic_ok_under_threshold": true,
+        "rlimit_bounds_child_address_space": true,
+        "note": "swap observable \u2192 monitor_and_terminate",
+        "real_swap_induced": false
+      }
+    },
+    {
+      "ac": "A2",
+      "name": "idempotent skip on complete verified key + partial-write",
+      "passed": true,
+      "evidence": {
+        "first_run_completed": [
+          0,
+          1,
+          2
+        ],
+        "rerun_zero_work": true,
+        "stray_tmp_not_counted": true,
+        "key_binds_impl_version": true,
+        "key_components": [
+          "input_digest",
+          "params_digest",
+          "git_sha",
+          "stage_impl_version",
+          "catalog_digest",
+          "schema_version",
+          "embedding_model_revision",
+          "seed",
+          "dep_lock_digest"
+        ]
+      }
+    },
+    {
+      "ac": "A6",
+      "name": "checkpoint/resume after SIGKILL (every projected-long stage)",
+      "passed": true,
+      "evidence": {
+        "killed_signal": 9,
+        "completed_after_kill": [
+          0,
+          1,
+          2
+        ],
+        "completed_final": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "resume_from": 3,
+        "max_recomputed_shards_after_kill": 0,
+        "resumed_not_restarted": true
+      }
+    },
+    {
+      "ac": "A7",
+      "name": "injected-error surfacing (never silent)",
+      "passed": true,
+      "evidence": {
+        "child_returncode": 1,
+        "error_surfaced": true,
+        "completed_before_error": [
+          0,
+          1
+        ],
+        "silent_skip": false
+      }
+    }
+  ],
+  "invariants_self_check": {
+    "measured_before_scale": true,
+    "resumable": true,
+    "observable": true,
+    "memory_bounded": true,
+    "errors_surfaced": true,
+    "failure_is_cheap": true
+  },
+  "failure_cost": {
+    "probe_wall_clock_s": 0.085,
+    "rows_processed_before_refusal": 2,
+    "max_recomputed_shards_after_kill": 0,
+    "max_uncheckpointed_work_s": 0.3
+  },
+  "execution_status": "completed",
+  "contract_status": "accepted",
+  "retrieval_instrument_status": "not_evaluated",
+  "discovery_status": "not_run",
+  "prerequisite_receipts": [],
+  "remote_state_sink": "refs/heads/slicer-status/30777927003",
+  "notes": "Sub A only \u2014 synthetic long stage; no model/corpus/ANN/retrieval."
+}

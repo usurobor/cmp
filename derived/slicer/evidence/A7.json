@@ -1,0 +1,14 @@
+{
+  "ac": "A7",
+  "name": "injected-error surfacing (never silent)",
+  "passed": true,
+  "evidence": {
+    "child_returncode": 1,
+    "error_surfaced": true,
+    "completed_before_error": [
+      0,
+      1
+    ],
+    "silent_skip": false
+  }
+}

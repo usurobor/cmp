@@ -1,0 +1,40 @@
+{
+  "ac": "A3b",
+  "name": "probe-selected worker/thread/batch, no oversubscription",
+  "passed": true,
+  "evidence": {
+    "effective_cpu": 8,
+    "chosen": {
+      "workers": 8,
+      "threads_per_worker": 1,
+      "batch": 256
+    },
+    "candidates": [
+      [
+        1,
+        1,
+        32
+      ],
+      [
+        2,
+        1,
+        64
+      ],
+      [
+        4,
+        2,
+        128
+      ],
+      [
+        8,
+        1,
+        256
+      ]
+    ],
+    "no_oversubscription": true,
+    "thread_caps_set": {
+      "OMP_NUM_THREADS": "1",
+      "ORT_NUM_THREADS": "1"
+    }
+  }
+}

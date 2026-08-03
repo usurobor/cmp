@@ -1,0 +1,10 @@
+{
+  "ac": "A1",
+  "name": "catalog governs I/O (truthful, not sandbox)",
+  "passed": true,
+  "evidence": {
+    "unregistered_refused": true,
+    "message": "catalog: unregistered output 'not_a_registered_dataset' \u2014 refusing to publish",
+    "read_only_enforced": true
+  }
+}
