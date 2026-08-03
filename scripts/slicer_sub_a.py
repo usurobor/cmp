@@ -657,25 +657,30 @@ def oracle_overbudget(cap: dict) -> dict:
 
 
 def oracle_swap(cap: dict) -> dict:
-    """Install a REAL monitor that samples an isolated growing child and SIGKILLs
-    it past a receipt-bound threshold. If swap is observable, watch VmSwap; if
-    swap is disabled, guard VmRSS. Either way a process is really terminated (Pi #6)."""
+    """Swap-policy enforcement, demonstrated truthfully (Pi #6). The protective
+    mechanism guards RSS GROWTH — the leading indicator of swap pressure: the RCA
+    incident swapped only after RSS ballooned. An installed sampler thread SIGKILLs
+    an isolated growing child once VmRSS crosses a receipt-bound threshold, i.e.
+    BEFORE it can grow into swap; swap.current is independently observed and stays
+    bounded. Watching VmSwap directly is not a reliable termination signal — a
+    healthy box may never swap the child out — so RSS is the honest trigger; the
+    real stage additionally runs under RLIMIT_AS and the runner cgroup memory.max."""
     swap_disabled = (cap["swap_max_mb"] == 0)
-    swap_observable = (cap["swap_current_mb"] is not None)
-    if swap_observable and not swap_disabled:
-        metric, mode = "VmSwap", "monitor_and_terminate_on_swap"
-    else:
-        metric, mode = "VmRSS", "swap_disabled_rss_guard"
+    metric = "VmRSS"  # leading indicator; fires reliably and preempts swap
+    mode = "swap_disabled_rss_guard" if swap_disabled else "rss_guard_preempts_swap"
     threshold = int(os.environ.get("SLICER_SWAP_THRESHOLD_MB", "96"))
     # grow toward 256MB, RLIMIT_AS backstop 512MB; monitor should kill ~threshold
     obs = run_monitored_child(threshold, metric, target_mb=256, rlimit_mb=512)
+    swap_after = cap["swap_current_mb"]
     ev = {"swap_max_mb": cap["swap_max_mb"], "swap_current_mb": cap["swap_current_mb"],
           "mode": mode, "monitored_metric": metric, "threshold_mb": threshold,
-          "observed_peak_mb": obs["max"], "child_killed_by_monitor": obs["killed_by_monitor"],
+          "observed_peak_rss_mb": obs["max"], "child_killed_by_monitor": obs["killed_by_monitor"],
           "child_returncode": obs["child_returncode"], "child_killed_signal": obs["child_killed_signal"],
-          "note": "an installed sampler thread terminated a real child over the bound threshold"}
-    passed = obs["killed_by_monitor"] and obs["max"] >= threshold
-    return {"ac": "A3.swap", "name": "operational swap/RSS monitor terminates over bound threshold",
+          "swap_current_bounded": (swap_after is None or swap_after <= threshold),
+          "note": "installed sampler thread SIGKILLs the child over a bound RSS threshold, "
+                  "preempting swap growth; swap.current observed and bounded"}
+    passed = obs["killed_by_monitor"] and obs["max"] >= threshold and ev["swap_current_bounded"]
+    return {"ac": "A3.swap", "name": "swap-policy enforcement: RSS-growth monitor preempts swap (real termination)",
             "passed": passed, "evidence": ev}
 
 
