@@ -1,6 +1,6 @@
 {
   "ac": "A4.no-trigger",
-  "name": "slicer-status/** triggers no workflow",
+  "name": "slicer-status/** triggers no workflow (static + runtime API)",
   "passed": true,
   "evidence": {
     "sample_ref": "slicer-status/deadbeef",
@@ -47,6 +47,12 @@
       }
     },
     "offending_workflows": [],
-    "note": "static: does any push-branches glob match slicer-status/*? \u03b4 confirms via Actions API post-run"
+    "runtime_api_check": {
+      "available": true,
+      "status_branch": "slicer-status/30782795424",
+      "runs_triggered_by_status_ref": 0,
+      "passed": true,
+      "checked_at": "2026-08-03T03:50:41Z"
+    }
   }
 }

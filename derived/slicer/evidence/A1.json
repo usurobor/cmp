@@ -1,10 +1,22 @@
 {
   "ac": "A1",
-  "name": "catalog governs I/O (truthful, not sandbox)",
+  "name": "catalog governs I/O operationally (real refusal observed)",
   "passed": true,
   "evidence": {
     "unregistered_refused": true,
-    "message": "catalog: unregistered output 'not_a_registered_dataset' \u2014 refusing to publish",
-    "read_only_enforced": true
+    "unregistered_msg": "catalog: unregistered output 'not_a_registered_dataset' \u2014 refusing to publish",
+    "readonly_output_refused": true,
+    "readonly_msg": "catalog: 'synthetic_seed' is read_only \u2014 cannot write",
+    "write_through_input_refused": true,
+    "write_msg": "read-only catalog input '/opt/actions-runner/_work/cmp/cmp/slicer/catalog.json': write refused",
+    "stage_output_root": "/opt/actions-runner/_work/_temp/slicer-state/shards",
+    "stage_wrote_files": [
+      "4a8095ee31135e6f/exec_ledger.jsonl",
+      "4a8095ee31135e6f/key.json",
+      "4a8095ee31135e6f/shard-00000.bin",
+      "4a8095ee31135e6f/completed.jsonl",
+      "4a8095ee31135e6f/shard-00001.bin"
+    ],
+    "wrote_outside_catalog_root": []
   }
 }

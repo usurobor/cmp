@@ -1,6 +1,6 @@
 {
   "ac": "A6",
-  "name": "checkpoint/resume after SIGKILL (every projected-long stage)",
+  "name": "checkpoint/resume after SIGKILL (measured recompute cost)",
   "passed": true,
   "evidence": {
     "killed_signal": 9,
@@ -20,7 +20,15 @@
       7
     ],
     "resume_from": 3,
-    "max_recomputed_shards_after_kill": 0,
+    "executed_on_resume": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "measured_recomputed_shards": 0,
+    "measured_max_shard_work_s": 0.061,
     "resumed_not_restarted": true
   }
 }

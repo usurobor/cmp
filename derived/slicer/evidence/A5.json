@@ -1,0 +1,14 @@
+{
+  "ac": "A5",
+  "name": "scientific-param identity vs execution-partition variance",
+  "passed": true,
+  "evidence": {
+    "exec_partition_x": "5528bfe0ec3a1f8a",
+    "exec_partition_y": "f76f38e35ffaee92",
+    "same_scientific_identical_outputs": true,
+    "scientific_digest_const": "a9553e38da9e4156",
+    "scientific_digest_changed": "f5f07a9bff9eaa5a",
+    "changed_param_new_outputs_and_key": true,
+    "note": "identity is over frozen scientific params; execution partition excluded"
+  }
+}

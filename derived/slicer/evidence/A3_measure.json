@@ -1,22 +1,26 @@
 {
   "ac": "A3.measure",
-  "name": "cgroup-effective capacity measured",
+  "name": "cgroup-effective capacity measured + safety factor applied",
   "passed": true,
   "evidence": {
     "effective_capacity": {
       "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
-      "host_mem_available_mb": 15296,
+      "host_mem_available_mb": 15297,
       "memory_high_mb": 10240,
       "memory_max_mb": 12288,
       "memory_current_mb": 188,
-      "memory_peak_mb": 211,
+      "memory_peak_mb": 457,
       "swap_max_mb": null,
       "swap_current_mb": 0,
       "cpuset_count": 8,
       "quota_cores": null,
       "effective_cpu": 8,
-      "available_mem_mb": 10052
+      "raw_available_mem_mb": 10052,
+      "safety_factor": 0.8,
+      "admission_mem_mb": 8041,
+      "memory_peak_delta_mb": 244
     },
+    "safety_factor_applied": true,
     "cgroup_effective_derived": true
   }
 }

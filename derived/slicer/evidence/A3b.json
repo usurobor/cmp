@@ -1,36 +1,54 @@
 {
   "ac": "A3b",
-  "name": "probe-selected worker/thread/batch, no oversubscription",
+  "name": "measured probe-selected worker/thread/batch (benchmarked)",
   "passed": true,
   "evidence": {
     "effective_cpu": 8,
+    "admission_mem_mb": 8041,
+    "measured_candidates": [
+      {
+        "workers": 1,
+        "threads_per_worker": 1,
+        "batch": 32,
+        "rows_per_s": 29301.1,
+        "peak_rss_mb": 19,
+        "wall_s": 0.137,
+        "feasible": true
+      },
+      {
+        "workers": 2,
+        "threads_per_worker": 1,
+        "batch": 64,
+        "rows_per_s": 57144.1,
+        "peak_rss_mb": 39,
+        "wall_s": 0.14,
+        "feasible": true
+      },
+      {
+        "workers": 4,
+        "threads_per_worker": 2,
+        "batch": 128,
+        "rows_per_s": 100814.5,
+        "peak_rss_mb": 78,
+        "wall_s": 0.159,
+        "feasible": true
+      },
+      {
+        "workers": 8,
+        "threads_per_worker": 1,
+        "batch": 256,
+        "rows_per_s": 197858.8,
+        "peak_rss_mb": 157,
+        "wall_s": 0.162,
+        "feasible": true
+      }
+    ],
     "chosen": {
       "workers": 8,
       "threads_per_worker": 1,
       "batch": 256
     },
-    "candidates": [
-      [
-        1,
-        1,
-        32
-      ],
-      [
-        2,
-        1,
-        64
-      ],
-      [
-        4,
-        2,
-        128
-      ],
-      [
-        8,
-        1,
-        256
-      ]
-    ],
+    "selection": "measured max rows_per_s among peak_rss<=admission_mem",
     "no_oversubscription": true,
     "thread_caps_set": {
       "OMP_NUM_THREADS": "1",

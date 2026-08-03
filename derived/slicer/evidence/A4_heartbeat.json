@@ -5,12 +5,19 @@
   "evidence": {
     "initial_roundtrip": {
       "verified": true,
-      "fetched_digest": "1a1612fb6ff0046463140959ab6f0325adb185ac1cc9331e6eda484f428095f8",
-      "expected_digest": "1a1612fb6ff0046463140959ab6f0325adb185ac1cc9331e6eda484f428095f8",
+      "fetched": {
+        "at": "2026-08-03T03:50:32Z",
+        "heartbeat_seq": 1,
+        "run_id": "30782795424",
+        "stage": "spine-init",
+        "status": "alive"
+      },
+      "fetched_digest": "4b098321e784b70b5d3197646c640708963f935a8539da4a9eeaacfa33d02d8c",
+      "expected_digest": "4b098321e784b70b5d3197646c640708963f935a8539da4a9eeaacfa33d02d8c",
       "run_id_match": true,
       "seq_match": true
     },
     "seq_incremented": true,
-    "ref": "refs/heads/slicer-status/30777927003"
+    "ref": "refs/heads/slicer-status/30782795424"
   }
 }

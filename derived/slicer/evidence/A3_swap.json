@@ -1,16 +1,17 @@
 {
   "ac": "A3.swap",
-  "name": "swap policy bound + observable (or child-AS-capped)",
-  "passed": true,
+  "name": "operational swap/RSS monitor terminates over bound threshold",
+  "passed": false,
   "evidence": {
     "swap_max_mb": null,
     "swap_current_mb": 0,
-    "mode": "monitor_and_terminate",
-    "swap_at_probe_mb": 0,
-    "monitor_logic_terminates_over_threshold": true,
-    "monitor_logic_ok_under_threshold": true,
-    "rlimit_bounds_child_address_space": true,
-    "note": "swap observable \u2192 monitor_and_terminate",
-    "real_swap_induced": false
+    "mode": "monitor_and_terminate_on_swap",
+    "monitored_metric": "VmSwap",
+    "threshold_mb": 96,
+    "observed_peak_mb": 0,
+    "child_killed_by_monitor": false,
+    "child_returncode": 0,
+    "child_killed_signal": null,
+    "note": "an installed sampler thread terminated a real child over the bound threshold"
   }
 }

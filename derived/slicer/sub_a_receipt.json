@@ -1,104 +1,164 @@
 {
-  "schema": "slicer-sub-a-receipt/2.2",
+  "schema": "slicer-sub-a-receipt/2.3",
   "sub": "A",
   "issue_contract": "slicer v2.2 @ 792f65d",
-  "run_id": "30777927003",
+  "run_id": "30782795424",
+  "git_sha": "9423bda325c143da0106b56fa1fbb622c3c2be1d",
+  "generated_at": "2026-08-03T03:50:41Z",
   "mode": "sub_a_synthetic",
-  "git_sha": "092cd65fcb7bbb3cd01022872798e707553314df",
-  "catalog_digest": "f0485b8bafb7221b",
-  "at": "2026-08-03T01:53:13Z",
+  "catalog_digest": "cf293490f6a95748",
   "effective_capacity": {
     "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
-    "host_mem_available_mb": 15296,
+    "host_mem_available_mb": 15297,
     "memory_high_mb": 10240,
     "memory_max_mb": 12288,
     "memory_current_mb": 188,
-    "memory_peak_mb": 211,
+    "memory_peak_mb": 457,
     "swap_max_mb": null,
     "swap_current_mb": 0,
     "cpuset_count": 8,
     "quota_cores": null,
     "effective_cpu": 8,
-    "available_mem_mb": 10052
+    "raw_available_mem_mb": 10052,
+    "safety_factor": 0.8,
+    "admission_mem_mb": 8041,
+    "memory_peak_delta_mb": 244
   },
   "probe": {
-    "rows_per_s": 23.4,
+    "rows_per_s": 18.2,
     "projected_full_n": 222855,
     "projected_peak_mb": 286.9,
-    "projected_wall_min": 158.42,
-    "mem_budget_mb": 10052.0,
+    "projected_wall_min": 204.22,
+    "mem_budget_mb": 8041,
     "wall_budget_min": 120.0,
     "verdict": "refuse",
     "reason": "projected>budget",
-    "probe_wall_clock_s": 0.085,
+    "probe_wall_clock_s": 0.11,
     "rows_processed": 2
   },
   "oracles": [
     {
+      "ac": "A4.heartbeat",
+      "name": "heartbeat publish + independent remote round-trip",
+      "passed": true,
+      "evidence": {
+        "initial_roundtrip": {
+          "verified": true,
+          "fetched": {
+            "at": "2026-08-03T03:50:32Z",
+            "heartbeat_seq": 1,
+            "run_id": "30782795424",
+            "stage": "spine-init",
+            "status": "alive"
+          },
+          "fetched_digest": "4b098321e784b70b5d3197646c640708963f935a8539da4a9eeaacfa33d02d8c",
+          "expected_digest": "4b098321e784b70b5d3197646c640708963f935a8539da4a9eeaacfa33d02d8c",
+          "run_id_match": true,
+          "seq_match": true
+        },
+        "seq_incremented": true,
+        "ref": "refs/heads/slicer-status/30782795424"
+      }
+    },
+    {
       "ac": "A1",
-      "name": "catalog governs I/O (truthful, not sandbox)",
+      "name": "catalog governs I/O operationally (real refusal observed)",
       "passed": true,
       "evidence": {
         "unregistered_refused": true,
-        "message": "catalog: unregistered output 'not_a_registered_dataset' \u2014 refusing to publish",
-        "read_only_enforced": true
+        "unregistered_msg": "catalog: unregistered output 'not_a_registered_dataset' \u2014 refusing to publish",
+        "readonly_output_refused": true,
+        "readonly_msg": "catalog: 'synthetic_seed' is read_only \u2014 cannot write",
+        "write_through_input_refused": true,
+        "write_msg": "read-only catalog input '/opt/actions-runner/_work/cmp/cmp/slicer/catalog.json': write refused",
+        "stage_output_root": "/opt/actions-runner/_work/_temp/slicer-state/shards",
+        "stage_wrote_files": [
+          "4a8095ee31135e6f/exec_ledger.jsonl",
+          "4a8095ee31135e6f/key.json",
+          "4a8095ee31135e6f/shard-00000.bin",
+          "4a8095ee31135e6f/completed.jsonl",
+          "4a8095ee31135e6f/shard-00001.bin"
+        ],
+        "wrote_outside_catalog_root": []
       }
     },
     {
       "ac": "A3.measure",
-      "name": "cgroup-effective capacity measured",
+      "name": "cgroup-effective capacity measured + safety factor applied",
       "passed": true,
       "evidence": {
         "effective_capacity": {
           "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
-          "host_mem_available_mb": 15296,
+          "host_mem_available_mb": 15297,
           "memory_high_mb": 10240,
           "memory_max_mb": 12288,
           "memory_current_mb": 188,
-          "memory_peak_mb": 211,
+          "memory_peak_mb": 457,
           "swap_max_mb": null,
           "swap_current_mb": 0,
           "cpuset_count": 8,
           "quota_cores": null,
           "effective_cpu": 8,
-          "available_mem_mb": 10052
+          "raw_available_mem_mb": 10052,
+          "safety_factor": 0.8,
+          "admission_mem_mb": 8041,
+          "memory_peak_delta_mb": 244
         },
+        "safety_factor_applied": true,
         "cgroup_effective_derived": true
       }
     },
     {
       "ac": "A3b",
-      "name": "probe-selected worker/thread/batch, no oversubscription",
+      "name": "measured probe-selected worker/thread/batch (benchmarked)",
       "passed": true,
       "evidence": {
         "effective_cpu": 8,
+        "admission_mem_mb": 8041,
+        "measured_candidates": [
+          {
+            "workers": 1,
+            "threads_per_worker": 1,
+            "batch": 32,
+            "rows_per_s": 29301.1,
+            "peak_rss_mb": 19,
+            "wall_s": 0.137,
+            "feasible": true
+          },
+          {
+            "workers": 2,
+            "threads_per_worker": 1,
+            "batch": 64,
+            "rows_per_s": 57144.1,
+            "peak_rss_mb": 39,
+            "wall_s": 0.14,
+            "feasible": true
+          },
+          {
+            "workers": 4,
+            "threads_per_worker": 2,
+            "batch": 128,
+            "rows_per_s": 100814.5,
+            "peak_rss_mb": 78,
+            "wall_s": 0.159,
+            "feasible": true
+          },
+          {
+            "workers": 8,
+            "threads_per_worker": 1,
+            "batch": 256,
+            "rows_per_s": 197858.8,
+            "peak_rss_mb": 157,
+            "wall_s": 0.162,
+            "feasible": true
+          }
+        ],
         "chosen": {
           "workers": 8,
           "threads_per_worker": 1,
           "batch": 256
         },
-        "candidates": [
-          [
-            1,
-            1,
-            32
-          ],
-          [
-            2,
-            1,
-            64
-          ],
-          [
-            4,
-            2,
-            128
-          ],
-          [
-            8,
-            1,
-            256
-          ]
-        ],
+        "selection": "measured max rows_per_s among peak_rss<=admission_mem",
         "no_oversubscription": true,
         "thread_caps_set": {
           "OMP_NUM_THREADS": "1",
@@ -107,24 +167,172 @@
       }
     },
     {
-      "ac": "A4.heartbeat",
-      "name": "heartbeat publish + independent remote round-trip",
+      "ac": "A5",
+      "name": "scientific-param identity vs execution-partition variance",
       "passed": true,
       "evidence": {
-        "initial_roundtrip": {
+        "exec_partition_x": "5528bfe0ec3a1f8a",
+        "exec_partition_y": "f76f38e35ffaee92",
+        "same_scientific_identical_outputs": true,
+        "scientific_digest_const": "a9553e38da9e4156",
+        "scientific_digest_changed": "f5f07a9bff9eaa5a",
+        "changed_param_new_outputs_and_key": true,
+        "note": "identity is over frozen scientific params; execution partition excluded"
+      }
+    },
+    {
+      "ac": "A2",
+      "name": "idempotency key wired into eligibility + recoverable manifest",
+      "passed": true,
+      "evidence": {
+        "first_run_completed": [
+          0,
+          1,
+          2
+        ],
+        "rerun_executed": [],
+        "rerun_zero_work": true,
+        "changed_key_executed": [
+          0,
+          1,
+          2
+        ],
+        "changed_key_reran": true,
+        "key_v1": "a1e85e1d0e4e32af",
+        "key_v2": "b1ac90b33d85a3dc",
+        "stray_tmp_not_counted": true,
+        "truncated_manifest_recovered": true,
+        "key_components": [
+          "scientific_digest",
+          "git_sha",
+          "stage_impl_version",
+          "catalog_digest",
+          "schema_version",
+          "dep_lock_digest"
+        ]
+      }
+    },
+    {
+      "ac": "A3.refuse",
+      "name": "capacity refusal before expensive work (with numbers)",
+      "passed": true,
+      "evidence": {
+        "forced_budget_probe": {
+          "rows_per_s": 1394.2,
+          "projected_full_n": 222855,
+          "projected_peak_mb": 286.9,
+          "projected_wall_min": 2.66,
+          "mem_budget_mb": 1,
+          "wall_budget_min": 120.0,
+          "verdict": "refuse",
+          "reason": "projected>budget",
+          "probe_wall_clock_s": 0.001,
+          "rows_processed": 2
+        }
+      }
+    },
+    {
+      "ac": "A3.enforce",
+      "name": "over-budget enforced in isolated child (labelled truthfully)",
+      "passed": true,
+      "evidence": {
+        "rlimit_as": {
+          "mechanism": "rlimit_as_rejection",
+          "child_returncode": 42,
+          "child_stderr_tail": "over-budget child: RLIMIT_AS rejected allocation (address-space cap)",
+          "parent_survived": true,
+          "note": "RLIMIT_AS refuses the allocation; this is address-space rejection, not a cgroup OOM-kill"
+        },
+        "cgroup_oom": {
+          "available": false,
+          "reason": "cannot create sub-cgroup: PermissionError"
+        },
+        "future_stage_launched_under_same_limit": true,
+        "future_stage_note": "the real stage inherits the runner cgroup memory.max (kernel kill boundary) and is additionally RLIMIT_AS-capped"
+      }
+    },
+    {
+      "ac": "A3.swap",
+      "name": "operational swap/RSS monitor terminates over bound threshold",
+      "passed": false,
+      "evidence": {
+        "swap_max_mb": null,
+        "swap_current_mb": 0,
+        "mode": "monitor_and_terminate_on_swap",
+        "monitored_metric": "VmSwap",
+        "threshold_mb": 96,
+        "observed_peak_mb": 0,
+        "child_killed_by_monitor": false,
+        "child_returncode": 0,
+        "child_killed_signal": null,
+        "note": "an installed sampler thread terminated a real child over the bound threshold"
+      }
+    },
+    {
+      "ac": "A6",
+      "name": "checkpoint/resume after SIGKILL (measured recompute cost)",
+      "passed": true,
+      "evidence": {
+        "killed_signal": 9,
+        "completed_after_kill": [
+          0,
+          1,
+          2
+        ],
+        "completed_final": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "resume_from": 3,
+        "executed_on_resume": [
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "measured_recomputed_shards": 0,
+        "measured_max_shard_work_s": 0.061,
+        "resumed_not_restarted": true
+      }
+    },
+    {
+      "ac": "A7",
+      "name": "injected-error surfaced via heartbeat (never silent)",
+      "passed": true,
+      "evidence": {
+        "child_returncode": 1,
+        "stderr_surfaced": true,
+        "error_heartbeat_roundtrip": {
           "verified": true,
-          "fetched_digest": "1a1612fb6ff0046463140959ab6f0325adb185ac1cc9331e6eda484f428095f8",
-          "expected_digest": "1a1612fb6ff0046463140959ab6f0325adb185ac1cc9331e6eda484f428095f8",
+          "fetched": {
+            "at": "2026-08-03T03:50:40Z",
+            "error_class": "injected",
+            "heartbeat_seq": 500,
+            "message": "injected error at shard 2",
+            "run_id": "30782795424",
+            "shard": 2,
+            "stage": "err",
+            "status": "error"
+          },
+          "fetched_digest": "9ab25c7bf019ba2e874674dce477270d48356096bce9f00ca2c1cb1cc03e6b7a",
+          "expected_digest": "9ab25c7bf019ba2e874674dce477270d48356096bce9f00ca2c1cb1cc03e6b7a",
           "run_id_match": true,
           "seq_match": true
         },
-        "seq_incremented": true,
-        "ref": "refs/heads/slicer-status/30777927003"
+        "error_visible_on_observability_surface": true,
+        "silent_skip": false
       }
     },
     {
       "ac": "A4.no-trigger",
-      "name": "slicer-status/** triggers no workflow",
+      "name": "slicer-status/** triggers no workflow (static + runtime API)",
       "passed": true,
       "evidence": {
         "sample_ref": "slicer-status/deadbeef",
@@ -171,119 +379,13 @@
           }
         },
         "offending_workflows": [],
-        "note": "static: does any push-branches glob match slicer-status/*? \u03b4 confirms via Actions API post-run"
-      }
-    },
-    {
-      "ac": "A3.refuse",
-      "name": "capacity refusal before expensive work (with numbers)",
-      "passed": true,
-      "evidence": {
-        "forced_budget_probe": {
-          "rows_per_s": 22.5,
-          "projected_full_n": 222855,
-          "projected_peak_mb": 286.9,
-          "projected_wall_min": 165.02,
-          "mem_budget_mb": 1.0,
-          "wall_budget_min": 120.0,
-          "verdict": "refuse",
-          "reason": "projected>budget",
-          "probe_wall_clock_s": 0.089,
-          "rows_processed": 2
+        "runtime_api_check": {
+          "available": true,
+          "status_branch": "slicer-status/30782795424",
+          "runs_triggered_by_status_ref": 0,
+          "passed": true,
+          "checked_at": "2026-08-03T03:50:41Z"
         }
-      }
-    },
-    {
-      "ac": "A3.enforce",
-      "name": "over-budget killed in isolated child; daemon safe",
-      "passed": true,
-      "evidence": {
-        "child_returncode": 42,
-        "child_stderr_tail": "over-budget child: MemoryError (cap enforced)",
-        "parent_survived": true,
-        "enforcement": "process RLIMIT_AS on isolated child (does not touch runner daemon)"
-      }
-    },
-    {
-      "ac": "A3.swap",
-      "name": "swap policy bound + observable (or child-AS-capped)",
-      "passed": true,
-      "evidence": {
-        "swap_max_mb": null,
-        "swap_current_mb": 0,
-        "mode": "monitor_and_terminate",
-        "swap_at_probe_mb": 0,
-        "monitor_logic_terminates_over_threshold": true,
-        "monitor_logic_ok_under_threshold": true,
-        "rlimit_bounds_child_address_space": true,
-        "note": "swap observable \u2192 monitor_and_terminate",
-        "real_swap_induced": false
-      }
-    },
-    {
-      "ac": "A2",
-      "name": "idempotent skip on complete verified key + partial-write",
-      "passed": true,
-      "evidence": {
-        "first_run_completed": [
-          0,
-          1,
-          2
-        ],
-        "rerun_zero_work": true,
-        "stray_tmp_not_counted": true,
-        "key_binds_impl_version": true,
-        "key_components": [
-          "input_digest",
-          "params_digest",
-          "git_sha",
-          "stage_impl_version",
-          "catalog_digest",
-          "schema_version",
-          "embedding_model_revision",
-          "seed",
-          "dep_lock_digest"
-        ]
-      }
-    },
-    {
-      "ac": "A6",
-      "name": "checkpoint/resume after SIGKILL (every projected-long stage)",
-      "passed": true,
-      "evidence": {
-        "killed_signal": 9,
-        "completed_after_kill": [
-          0,
-          1,
-          2
-        ],
-        "completed_final": [
-          0,
-          1,
-          2,
-          3,
-          4,
-          5,
-          6,
-          7
-        ],
-        "resume_from": 3,
-        "max_recomputed_shards_after_kill": 0,
-        "resumed_not_restarted": true
-      }
-    },
-    {
-      "ac": "A7",
-      "name": "injected-error surfacing (never silent)",
-      "passed": true,
-      "evidence": {
-        "child_returncode": 1,
-        "error_surfaced": true,
-        "completed_before_error": [
-          0,
-          1
-        ],
-        "silent_skip": false
       }
     }
   ],
@@ -296,16 +398,105 @@
     "failure_is_cheap": true
   },
   "failure_cost": {
-    "probe_wall_clock_s": 0.085,
+    "probe_wall_clock_s": 0.11,
     "rows_processed_before_refusal": 2,
-    "max_recomputed_shards_after_kill": 0,
-    "max_uncheckpointed_work_s": 0.3
+    "measured_recomputed_shards_after_kill": 0,
+    "measured_max_uncheckpointed_work_s": 0.061
   },
   "execution_status": "completed",
-  "contract_status": "accepted",
+  "contract_status": "rejected",
   "retrieval_instrument_status": "not_evaluated",
   "discovery_status": "not_run",
   "prerequisite_receipts": [],
-  "remote_state_sink": "refs/heads/slicer-status/30777927003",
-  "notes": "Sub A only \u2014 synthetic long stage; no model/corpus/ANN/retrieval."
+  "remote_state_sink": "refs/heads/slicer-status/30782795424",
+  "notes": "Sub A only \u2014 synthetic long stage; no model/corpus/ANN/retrieval.",
+  "terminal_heartbeat": {
+    "verified": true,
+    "fetched": {
+      "at": "2026-08-03T03:50:41Z",
+      "contract_status": "rejected",
+      "heartbeat_seq": 999,
+      "run_id": "30782795424",
+      "stage": "sub-a-done",
+      "status": "completed"
+    },
+    "fetched_digest": "6c1db9688f0b036ec2571354cd9743985e0310a96854c6d6413d3c893e953e03",
+    "expected_digest": "6c1db9688f0b036ec2571354cd9743985e0310a96854c6d6413d3c893e953e03",
+    "run_id_match": true,
+    "seq_match": true
+  },
+  "evidence_refs": [
+    {
+      "ac": "A4.heartbeat",
+      "file": "evidence/A4_heartbeat.json",
+      "sha256": "6b4c1044f33b2780c8560f07c7071daebf1a4306eed31a2d30445be96edb1642",
+      "passed": true
+    },
+    {
+      "ac": "A1",
+      "file": "evidence/A1.json",
+      "sha256": "4129a1482af26804d0303abe1bbd38e4a308a0ed6bec37a0481671665f56971a",
+      "passed": true
+    },
+    {
+      "ac": "A3.measure",
+      "file": "evidence/A3_measure.json",
+      "sha256": "0f5a0abfe22555963b5972313769e04a221e83f3addbf48d5a0196739fb5d8a9",
+      "passed": true
+    },
+    {
+      "ac": "A3b",
+      "file": "evidence/A3b.json",
+      "sha256": "ed91ee4387342dc21f4013d15c92e668deea59cc58e3cfa7ffa8278528bbeff2",
+      "passed": true
+    },
+    {
+      "ac": "A5",
+      "file": "evidence/A5.json",
+      "sha256": "75e6123ca656d76fd0229d86c60dffc4f456f421623a9c44fd0ce33664e7800e",
+      "passed": true
+    },
+    {
+      "ac": "A2",
+      "file": "evidence/A2.json",
+      "sha256": "142a1d64344c7e1925278076dc8a7071964a0ab88adde465da30239d7a5740a9",
+      "passed": true
+    },
+    {
+      "ac": "A3.refuse",
+      "file": "evidence/A3_refuse.json",
+      "sha256": "f67209f34de8a8c4359d0f22b51cfdccc90cda2434dfb7cde189e6b0c5845ce2",
+      "passed": true
+    },
+    {
+      "ac": "A3.enforce",
+      "file": "evidence/A3_enforce.json",
+      "sha256": "7f60f087ba419400792d32e84a68b021cfa6771cfbc83c4b0d584de95a55b1f9",
+      "passed": true
+    },
+    {
+      "ac": "A3.swap",
+      "file": "evidence/A3_swap.json",
+      "sha256": "aad420be0bff81512fc4521b0df0f63429c8806eb8c0e80c99adb47d450990f3",
+      "passed": false
+    },
+    {
+      "ac": "A6",
+      "file": "evidence/A6.json",
+      "sha256": "a39b20155bbb2fce65fd063c3e29aa6097cfc85a01bf54352af073bca757085c",
+      "passed": true
+    },
+    {
+      "ac": "A7",
+      "file": "evidence/A7.json",
+      "sha256": "49e4ad74226c69610fb4e3b7a50c1db2c4ed2258cfedf6cf2c62a8edc099e12c",
+      "passed": true
+    },
+    {
+      "ac": "A4.no-trigger",
+      "file": "evidence/A4_no-trigger.json",
+      "sha256": "083ba7442b268b06ce893607b050ab34477949cb1dff2dffe137f208b0864061",
+      "passed": true
+    }
+  ]
 }

@@ -1,6 +1,6 @@
 {
   "ac": "A2",
-  "name": "idempotent skip on complete verified key + partial-write",
+  "name": "idempotency key wired into eligibility + recoverable manifest",
   "passed": true,
   "evidence": {
     "first_run_completed": [
@@ -8,18 +8,24 @@
       1,
       2
     ],
+    "rerun_executed": [],
     "rerun_zero_work": true,
+    "changed_key_executed": [
+      0,
+      1,
+      2
+    ],
+    "changed_key_reran": true,
+    "key_v1": "a1e85e1d0e4e32af",
+    "key_v2": "b1ac90b33d85a3dc",
     "stray_tmp_not_counted": true,
-    "key_binds_impl_version": true,
+    "truncated_manifest_recovered": true,
     "key_components": [
-      "input_digest",
-      "params_digest",
+      "scientific_digest",
       "git_sha",
       "stage_impl_version",
       "catalog_digest",
       "schema_version",
-      "embedding_model_revision",
-      "seed",
       "dep_lock_digest"
     ]
   }
