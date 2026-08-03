@@ -1,11 +1,17 @@
 # Slicer Sub A — generic spine proven on a synthetic checkpointed long stage.
 # Executable contract: issue v2.2 @ 792f65d. Runs on cn-sigma. No model, no
-# corpus, no ANN, no retrieval, no Sub B/C. Fault-injection/over-budget run in
-# isolated RLIMIT-capped child processes (never touch the runner daemon).
+# corpus, no ANN, no retrieval, no Sub B/C. Fault-injection/over-budget/swap-
+# monitor tests run in isolated RLIMIT-capped child processes (never the daemon).
 #
 # NOTE: this workflow does NOT trigger on refs/heads/slicer-status/** — the
 # heartbeat status refs must enqueue no workflow (AC-A4). It triggers only on the
 # work branch for its own sources, or manual dispatch.
+#
+# Anti-false-green (Pi #1): checkpoint state lives outside the checkout
+# (SLICER_STATE_DIR); the receipt/evidence are quarantined and regenerated each
+# run; the gate fails unless the receipt is fresh (run_id == GITHUB_RUN_ID,
+# git_sha == GITHUB_SHA), the oracle process exited 0, every evidence digest
+# matches, and the contract is accepted.
 name: slicer-sub-a
 
 on:
@@ -19,6 +25,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: slicer-sub-a
@@ -30,12 +37,15 @@ jobs:
     env:
       OMP_NUM_THREADS: "1"
       ORT_NUM_THREADS: "1"
+      SLICER_STATE_DIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
         with:
           clean: false
       - name: Run Sub A oracles (synthetic spine)
         id: run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config user.name "cn-sigma-runner"
           git config user.email "runner@cn-sigma"
@@ -60,15 +70,42 @@ jobs:
             echo "push retry $i"; git rebase --abort 2>/dev/null || true; sleep 3
           done
           echo "failed to push receipt"; exit 1
-      - name: Enforce Sub A gate (fail job if contract not accepted)
+      - name: Enforce Sub A gate (fresh + proof-carrying + accepted)
         if: always()
+        env:
+          ORACLE_RC: ${{ steps.run.outputs.rc }}
         run: |
           python3 - <<'PY'
-          import json,sys
-          r=json.load(open("derived/slicer/sub_a_receipt.json"))
-          print("execution_status  :", r["execution_status"])
-          print("contract_status   :", r["contract_status"])
-          print("retrieval_instr   :", r["retrieval_instrument_status"])
-          print("discovery_status  :", r["discovery_status"])
-          sys.exit(0 if r["contract_status"]=="accepted" else 1)
+          import json, os, sys, hashlib
+          def sha256_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(65536), b""):
+                      h.update(c)
+              return h.hexdigest()
+          rp = "derived/slicer/sub_a_receipt.json"
+          if not os.path.exists(rp):
+              print("GATE FAIL: no receipt produced this run"); sys.exit(1)
+          r = json.load(open(rp))
+          fails = []
+          if os.environ.get("ORACLE_RC") != "0":
+              fails.append(f"oracle process rc={os.environ.get('ORACLE_RC')} (nonzero)")
+          if r.get("run_id") != os.environ.get("GITHUB_RUN_ID"):
+              fails.append(f"stale/foreign receipt: run_id {r.get('run_id')} != GITHUB_RUN_ID {os.environ.get('GITHUB_RUN_ID')}")
+          if r.get("git_sha") != os.environ.get("GITHUB_SHA"):
+              fails.append(f"git_sha {r.get('git_sha')} != GITHUB_SHA {os.environ.get('GITHUB_SHA')}")
+          for ref in r.get("evidence_refs", []):
+              fp = os.path.join("derived/slicer", ref["file"])
+              if not os.path.exists(fp) or sha256_file(fp) != ref["sha256"]:
+                  fails.append(f"evidence digest mismatch: {ref['file']}")
+          for ax in ("execution_status", "contract_status", "retrieval_instrument_status", "discovery_status"):
+              print(f"{ax:28s}: {r.get(ax)}")
+          if r.get("contract_status") != "accepted":
+              fails.append(f"contract_status={r.get('contract_status')}")
+          if fails:
+              print("GATE FAIL:")
+              for f in fails:
+                  print("  -", f)
+              sys.exit(1)
+          print("GATE PASS: fresh, proof-carrying, accepted")
           PY
