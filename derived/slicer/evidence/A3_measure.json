@@ -5,20 +5,21 @@
   "evidence": {
     "effective_capacity": {
       "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
-      "host_mem_available_mb": 15315,
+      "host_mem_available_mb": 15330,
       "memory_high_mb": 10240,
       "memory_max_mb": 12288,
-      "memory_current_mb": 191,
-      "memory_peak_mb": 457,
+      "memory_current_mb": 192,
+      "cgroup_lifetime_peak_mb": 457,
+      "run_scoped_peak_rss_mb": 112,
+      "peak_note": "cgroup memory.peak is the long-lived runner-service cgroup LIFETIME high-water, not this run's peak; run_scoped_peak_rss_mb is a process-tree sampler value. A true per-stage cgroup peak needs a delegated cgroup (Sub B).",
       "swap_max_mb": null,
       "swap_current_mb": 0,
       "cpuset_count": 8,
       "quota_cores": null,
       "effective_cpu": 8,
-      "raw_available_mem_mb": 10049,
+      "raw_available_mem_mb": 10048,
       "safety_factor": 0.8,
-      "admission_mem_mb": 8039,
-      "memory_peak_delta_mb": 0
+      "admission_mem_mb": 8038
     },
     "safety_factor_applied": true,
     "cgroup_effective_derived": true

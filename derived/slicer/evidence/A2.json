@@ -1,6 +1,6 @@
 {
   "ac": "A2",
-  "name": "idempotency key wired into eligibility + recoverable manifest",
+  "name": "idempotency key wired into eligibility + recoverable completion state",
   "passed": true,
   "evidence": {
     "first_run_completed": [
@@ -16,10 +16,11 @@
       2
     ],
     "changed_key_reran": true,
-    "key_v1": "6bd94314fde76115",
-    "key_v2": "24cc98224ea62c73",
+    "key_v1": "8ba69f5987ebe41d",
+    "key_v2": "acdb577be14eff80",
     "stray_tmp_not_counted": true,
-    "truncated_manifest_recovered": true,
+    "corrupt_marker_recomputed_not_poisoned": true,
+    "completion_protocol": "one atomic marker file per shard (no shared append to corrupt)",
     "key_components": [
       "scientific_digest",
       "git_sha",

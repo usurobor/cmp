@@ -3,13 +3,13 @@
   "name": "checkpoint/resume after SIGKILL (measured recompute cost)",
   "passed": true,
   "evidence": {
-    "killed_signal": 9,
-    "completed_after_kill": [
+    "kdir": "/home/sigma/.cmp/slicer/state/resume/539564605b957e19",
+    "before": [
       0,
       1,
       2
     ],
-    "completed_final": [
+    "after": [
       0,
       1,
       2,
@@ -19,7 +19,6 @@
       6,
       7
     ],
-    "resume_from": 3,
     "executed_on_resume": [
       3,
       4,
@@ -27,8 +26,18 @@
       6,
       7
     ],
+    "recomputed": 0,
+    "killed_signal": 0,
+    "admit": {
+      "admit": true,
+      "reason": "checkpointed or within uncheckpointed budget",
+      "projected_wall_s": 0.0,
+      "threshold_s": 30.0,
+      "checkpoint_boundary": "shard"
+    },
+    "max_shard_work_s": 0.051,
+    "resumed_not_restarted": true,
     "measured_recomputed_shards": 0,
-    "measured_max_shard_work_s": 0.045,
-    "resumed_not_restarted": true
+    "measured_max_shard_work_s": 0.051
   }
 }

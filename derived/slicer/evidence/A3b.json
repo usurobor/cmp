@@ -1,58 +1,49 @@
 {
   "ac": "A3b",
-  "name": "measured probe-selected worker/thread/batch (benchmarked)",
+  "name": "measured worker-count selection (threads/batch not_evaluated \u2192 Sub B)",
   "passed": true,
   "evidence": {
     "effective_cpu": 8,
-    "admission_mem_mb": 8039,
+    "admission_mem_mb": 8038,
+    "measured_dimension": "workers",
     "measured_candidates": [
       {
         "workers": 1,
-        "threads_per_worker": 1,
-        "batch": 32,
-        "rows_per_s": 33095.7,
-        "peak_rss_mb": 19,
-        "wall_s": 0.121,
+        "rows_per_s": 23563.1,
+        "peak_rss_mb": 20,
+        "wall_s": 0.17,
         "feasible": true
       },
       {
         "workers": 2,
-        "threads_per_worker": 1,
-        "batch": 64,
-        "rows_per_s": 63163.3,
-        "peak_rss_mb": 39,
-        "wall_s": 0.127,
+        "rows_per_s": 40399.3,
+        "peak_rss_mb": 40,
+        "wall_s": 0.198,
         "feasible": true
       },
       {
         "workers": 4,
-        "threads_per_worker": 2,
-        "batch": 128,
-        "rows_per_s": 125453.3,
-        "peak_rss_mb": 78,
-        "wall_s": 0.128,
+        "rows_per_s": 87341.5,
+        "peak_rss_mb": 81,
+        "wall_s": 0.183,
         "feasible": true
       },
       {
         "workers": 8,
-        "threads_per_worker": 1,
-        "batch": 256,
-        "rows_per_s": 231589.2,
-        "peak_rss_mb": 157,
-        "wall_s": 0.138,
+        "rows_per_s": 95446.1,
+        "peak_rss_mb": 162,
+        "wall_s": 0.335,
         "feasible": true
       }
     ],
     "chosen": {
       "workers": 8,
-      "threads_per_worker": 1,
-      "batch": 256
+      "threads_per_worker": "not_evaluated",
+      "batch": "not_evaluated"
     },
-    "selection": "measured max rows_per_s among peak_rss<=admission_mem",
-    "no_oversubscription": true,
-    "thread_caps_set": {
-      "OMP_NUM_THREADS": "1",
-      "ORT_NUM_THREADS": "1"
-    }
+    "threads_per_worker_policy": "pinned to 1 (no oversubscription); NOT measured in Sub A",
+    "batch_status": "not_evaluated in Sub A \u2014 requires the real embedding workload (Sub B)",
+    "selection": "measured max rows_per_s among worker-counts with peak_rss<=admission_mem",
+    "no_oversubscription": true
   }
 }

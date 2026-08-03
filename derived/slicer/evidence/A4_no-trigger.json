@@ -49,10 +49,10 @@
     "offending_workflows": [],
     "runtime_api_check": {
       "available": true,
-      "status_branch": "slicer-status/30782954297",
+      "status_branch": "slicer-status/30824612821",
       "runs_triggered_by_status_ref": 0,
       "passed": true,
-      "checked_at": "2026-08-03T03:54:27Z"
+      "checked_at": "2026-08-03T14:50:40Z"
     }
   }
 }

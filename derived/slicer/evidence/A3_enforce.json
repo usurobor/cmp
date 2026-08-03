@@ -14,7 +14,6 @@
       "available": false,
       "reason": "cannot create sub-cgroup: PermissionError"
     },
-    "future_stage_launched_under_same_limit": true,
     "future_stage_note": "the real stage inherits the runner cgroup memory.max (kernel kill boundary) and is additionally RLIMIT_AS-capped"
   }
 }

@@ -13,6 +13,6 @@
     "child_returncode": -9,
     "child_killed_signal": 9,
     "swap_current_bounded": true,
-    "note": "installed sampler thread SIGKILLs the child over a bound RSS threshold, preempting swap growth; swap.current observed and bounded"
+    "note": "installed sampler thread SIGKILLs the child over a bound RSS threshold, preempting swap"
   }
 }
