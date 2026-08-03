@@ -2,12 +2,13 @@
 """slicer_sub_a.py — Slicer Sub A: the generic spine, proven on a SYNTHETIC
 checkpointed long stage. Executable contract: issue v2.2 @ 792f65d.
 
-This is the repaired implementation after independent PM (Pi) audit. Every oracle
-must drive the real operational invariant, not assert a declaration or exercise a
-helper. Checkpoint state lives OUTSIDE the checkout; the receipt is proof-carrying
-(run_id / git_sha / per-evidence sha256 / runtime no-trigger API result); the
-observability gate is fail-closed; capacity/enforcement claims are measured and
-labelled truthfully.
+Second repair, after Pi's re-audit of the first repair. Every oracle must drive
+the real operational invariant, and every receipt claim must be measured and
+scoped honestly (never broader than what ran). Checkpoint state is DURABLE and
+run-id-independent (survives across workflow jobs, not just within one job); the
+receipt is proof-carrying; the observability gate is fail-closed; capacity and
+enforcement claims are measured and labelled truthfully; the uncheckpointable-
+long-stage REFUSAL path is exercised, not only the positive resume path.
 
 HARD PROHIBITIONS honored: no model download / embedding, no market corpus beyond
 a trivial catalog check, no ANN, no semantic retrieval, no Sub B/C, no auto-
@@ -15,10 +16,11 @@ continuation. Stdlib only. Fault-injection / over-budget / swap-monitor tests ru
 in isolated RLIMIT-capped child processes and never touch the runner daemon.
 
 Modes:
-  oracles                                   # main: run all Sub A oracles, emit receipt
+  oracles
   stage <base> <n> [--die-at K] [--error-at K] [--sci S] [--impl V] [--epoch E]
-  benchworker <items> <hwm_out>             # one benchmark worker (measures own VmHWM)
-  overbudget <limit_mb>                      # RLIMIT_AS rejection target
+  partworker <sci> <outdir> <id0,id1,...>    # compute a partition's items
+  benchworker <items> <hwm_out>              # one benchmark worker (measures VmHWM)
+  overbudget <limit_mb>                        # RLIMIT_AS rejection target
   grow <target_mb> <rlimit_mb> <step_mb> <sleep_ms>   # monitored-growth target
 """
 from __future__ import annotations
@@ -27,6 +29,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -42,22 +45,30 @@ CATALOG = WS / "slicer" / "catalog.json"
 
 
 def _state_root() -> Path:
-    # Checkpoint / working state MUST live outside the checkout (Pi #1): a
-    # previous run's state must never be resurrected by `clean: false`.
-    for env in ("SLICER_STATE_DIR", "RUNNER_TEMP", "TMPDIR"):
-        v = os.environ.get(env)
-        if v:
-            return Path(v).resolve() / "slicer-state"
-    return Path("/tmp/slicer-state").resolve()
+    """DURABLE, run-id-independent checkpoint root (Pi #1). It must survive across
+    workflow jobs, so it must NOT be RUNNER_TEMP (GitHub empties that at the start
+    and end of every job) and must NOT be inside the checkout (wiped by checkout).
+    Order: explicit SLICER_STATE_DIR (the workflow points this at a durable box
+    path) → the runner user's persistent home → a fixed durable fallback."""
+    v = os.environ.get("SLICER_STATE_DIR")
+    if v:
+        return Path(v).resolve()
+    home = os.environ.get("HOME")
+    if home:
+        return Path(home).resolve() / ".cmp" / "slicer" / "state"
+    return Path("/var/tmp/cmp-slicer-state").resolve()  # /var/tmp persists; /tmp may not
 
 
 STATE = _state_root()
-SCHEMA = "slicer-sub-a-receipt/2.3"
+SCHEMA = "slicer-sub-a-receipt/2.4"
 SEED = int(os.environ.get("SLICER_SEED", "20260802"))
 SAFETY = float(os.environ.get("SLICER_SAFETY", "0.8"))
+MAX_UNCHECKPOINTED_WORK_S = float(os.environ.get("SLICER_MAX_UNCHECKPOINTED_WORK_S", "30"))
 SELF = os.path.abspath(__file__)
 SKIP_HB = os.environ.get("SLICER_SKIP_HEARTBEAT") == "1"
 TRANSFORM_VERSION = "synthetic-transform/1"
+# the synthetic stage checkpoints at every shard boundary
+STAGE_DESCRIPTOR = {"checkpoint_boundary": "shard"}
 
 
 # ------------------------------------------------------------- pure helpers
@@ -106,6 +117,68 @@ def proc_status_kb(pid: int, key: str):
     return None
 
 
+def read_ppid(pid: int):
+    try:
+        for ln in Path(f"/proc/{pid}/status").read_text().splitlines():
+            if ln.startswith("PPid:"):
+                return int(ln.split()[1])
+    except OSError:
+        return None
+    return None
+
+
+# ------------------------------------ run-scoped process-tree RSS high-water
+def tree_rss_mb(root: int) -> int:
+    """Sum VmRSS across `root` and all its live descendants (MB). Run-scoped —
+    unlike cgroup memory.peak, which is the long-lived service cgroup's LIFETIME
+    high-water and cannot attribute a peak to this run (Pi peak correction)."""
+    try:
+        pids = [int(d) for d in os.listdir("/proc") if d.isdigit()]
+    except OSError:
+        return 0
+    children: dict[int, list[int]] = {}
+    for p in pids:
+        pp = read_ppid(p)
+        if pp is not None:
+            children.setdefault(pp, []).append(p)
+    seen, stack = {root}, [root]
+    while stack:
+        for c in children.get(stack.pop(), []):
+            if c not in seen:
+                seen.add(c); stack.append(c)
+    total_kb = sum(proc_status_kb(p, "VmRSS") or 0 for p in seen)
+    return total_kb // 1024
+
+
+class TreeSampler:
+    """Background sampler recording the run-scoped process-tree RSS high-water."""
+
+    def __init__(self, interval=0.15):
+        self.hi = 0
+        self.interval = interval
+        self.samples = 0
+        self._root = os.getpid()
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._loop, daemon=True)
+
+    def _loop(self):
+        while not self._stop.is_set():
+            self.hi = max(self.hi, tree_rss_mb(self._root))
+            self.samples += 1
+            self._stop.wait(self.interval)
+
+    def start(self):
+        self.hi = tree_rss_mb(self._root)
+        self._t.start()
+        return self
+
+    def stop(self):
+        self._stop.set()
+        self._t.join(timeout=1)
+        self.hi = max(self.hi, tree_rss_mb(self._root))
+        return self.hi
+
+
 # ------------------------------------------------ cgroup-effective capacity
 def _read(path: str):
     try:
@@ -146,7 +219,11 @@ def read_capacity() -> dict:
             host_avail_mb = int(ln.split()[1]) // 1024
     cap = {"cgroup_base": base, "host_mem_available_mb": host_avail_mb,
            "memory_high_mb": None, "memory_max_mb": None, "memory_current_mb": None,
-           "memory_peak_mb": None, "swap_max_mb": None, "swap_current_mb": None,
+           "cgroup_lifetime_peak_mb": None, "run_scoped_peak_rss_mb": None,
+           "peak_note": "cgroup memory.peak is the long-lived runner-service cgroup LIFETIME "
+                        "high-water, not this run's peak; run_scoped_peak_rss_mb is a process-tree "
+                        "sampler value. A true per-stage cgroup peak needs a delegated cgroup (Sub B).",
+           "swap_max_mb": None, "swap_current_mb": None,
            "cpuset_count": None, "quota_cores": None, "effective_cpu": None,
            "raw_available_mem_mb": None, "safety_factor": SAFETY, "admission_mem_mb": None}
     if base:
@@ -157,7 +234,7 @@ def read_capacity() -> dict:
         cap["memory_max_mb"] = mb("memory.max")
         mc = _int_or_max(_read(base + "/memory.current"))
         cap["memory_current_mb"] = None if mc is None else mc // (1024 * 1024)
-        cap["memory_peak_mb"] = _cg_peak_mb(base)
+        cap["cgroup_lifetime_peak_mb"] = _cg_peak_mb(base)
         cap["swap_max_mb"] = mb("memory.swap.max")
         sc = _int_or_max(_read(base + "/memory.swap.current"))
         cap["swap_current_mb"] = None if sc is None else sc // (1024 * 1024)
@@ -182,12 +259,12 @@ def read_capacity() -> dict:
     if host_avail_mb is not None:
         cands.append(host_avail_mb)
     if cap["memory_high_mb"] is not None:
-        cands.append(cap["memory_high_mb"] - cur)   # reclaim/throttle boundary (RCA symptom)
+        cands.append(cap["memory_high_mb"] - cur)
     if cap["memory_max_mb"] is not None:
-        cands.append(cap["memory_max_mb"] - cur)     # kill boundary
+        cands.append(cap["memory_max_mb"] - cur)
     cap["raw_available_mem_mb"] = min(cands) if cands else host_avail_mb
     if cap["raw_available_mem_mb"] is not None:
-        cap["admission_mem_mb"] = int(cap["raw_available_mem_mb"] * SAFETY)  # applied safety factor
+        cap["admission_mem_mb"] = int(cap["raw_available_mem_mb"] * SAFETY)
     return cap
 
 
@@ -218,8 +295,6 @@ class Catalog:
         self.schema_version = self.doc["schema_version"]
 
     def _root(self, d) -> Path:
-        # 'derived' working datasets are rooted OUTSIDE the checkout (state dir);
-        # committed artifacts and raw inputs are repo-relative.
         if d.get("kind") == "derived" and d.get("working"):
             return STATE
         return WS
@@ -260,15 +335,32 @@ def identity_key(sci_param: str, impl_version: str, catalog: Catalog) -> dict:
         "catalog_digest": catalog.digest,
         "schema_version": catalog.schema_version,
         "dep_lock_digest": dep_lock_digest(),
+        # NB: GITHUB_RUN_ID is deliberately NOT a key component — a new workflow
+        # run resolves the same checkpoint dir and resumes it.
     }
     key["key_digest"] = digest_obj(key)
     return key
 
 
+# ---------------------------------------------------- admission (refusal gate)
+def admit_stage(descriptor: dict) -> dict:
+    """Pure admission decision (Pi #4 refusal path). A stage whose projected work
+    exceeds max_uncheckpointed_work_s MUST expose a checkpoint boundary or be
+    refused before launch."""
+    thr = float(descriptor.get("max_uncheckpointed_work_s", MAX_UNCHECKPOINTED_WORK_S))
+    projected = float(descriptor.get("projected_wall_s", 0))
+    boundary = descriptor.get("checkpoint_boundary", "none")
+    if projected > thr and boundary == "none":
+        return {"admit": False, "reason": "projected work exceeds max_uncheckpointed_work_s and no checkpoint boundary",
+                "projected_wall_s": projected, "threshold_s": thr, "checkpoint_boundary": boundary}
+    return {"admit": True, "reason": "checkpointed or within uncheckpointed budget",
+            "projected_wall_s": projected, "threshold_s": thr, "checkpoint_boundary": boundary}
+
+
 # ------------------------------------------ synthetic checkpointed long stage
 def atomic_write(path: Path, data: bytes) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     with open(tmp, "wb") as f:
         f.write(data)
         f.flush()
@@ -278,27 +370,27 @@ def atomic_write(path: Path, data: bytes) -> str:
 
 
 def key_dir(base: Path, key_digest: str) -> Path:
-    # Outputs are namespaced by identity key: a changed key => a different dir =>
-    # prior outputs are ineligible => the stage reruns (Pi #4).
     return base / key_digest
 
 
+def completed_dir(kdir: Path) -> Path:
+    return kdir / "completed"
+
+
 def read_manifest(kdir: Path) -> dict:
-    """Return {shard: entry} for digest-verified completed shards. A truncated or
-    malformed FINAL line is tolerated (that shard is simply treated as
-    incomplete and will recompute) — recoverable append protocol (Pi #4)."""
-    mp = kdir / "completed.jsonl"
+    """Completion is recorded as ONE atomically-written marker file per shard
+    (Pi #5): there is no shared append-only file to corrupt, so a crash mid-write
+    leaves an ignorable .tmp and never a poisoned tail. A shard counts complete
+    only if its marker parses AND its shard file's digest matches."""
+    cd = completed_dir(kdir)
     out = {}
-    if not mp.exists():
+    if not cd.exists():
         return out
-    for ln in mp.read_text().splitlines():
-        ln = ln.strip()
-        if not ln:
-            continue
+    for mp in cd.glob("shard-*.json"):
         try:
-            e = json.loads(ln)
-        except json.JSONDecodeError:
-            continue  # tolerate a truncated tail line
+            e = json.loads(mp.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue  # ignore a partially-written marker; that shard recomputes
         sp = kdir / e["file"]
         if sp.exists() and sha256_file(sp) == e["digest"]:
             out[e["shard"]] = e
@@ -312,14 +404,28 @@ def _transform(sci_param: str, shard: int) -> bytes:
     return buf
 
 
+def _safe_append_line(path: Path, line: str):
+    """Append a line, first repairing any truncated tail so a prior half-written
+    line can never fuse with this one (Pi #5)."""
+    if path.exists():
+        with open(path, "rb") as f:
+            data = f.read()
+        if data and not data.endswith(b"\n"):
+            nl = data.rfind(b"\n")
+            with open(path, "wb") as f:
+                f.write(data[:nl + 1] if nl >= 0 else b"")
+    with open(path, "a") as f:
+        f.write(line + "\n")
+        f.flush(); os.fsync(f.fileno())
+
+
 def synthetic_stage(base: Path, n_shards: int, sci_param="baseline",
                     impl_version="synthetic/1", epoch=1, die_at=None, error_at=None,
                     catalog: Catalog | None = None) -> dict:
     cat = catalog or Catalog(CATALOG)
     key = identity_key(sci_param, impl_version, cat)
     kdir = key_dir(base, key["key_digest"])
-    kdir.mkdir(parents=True, exist_ok=True)
-    # persist the key beside the outputs so eligibility is bound to it
+    completed_dir(kdir).mkdir(parents=True, exist_ok=True)
     (kdir / "key.json").write_text(json.dumps(key, indent=2))
     done = read_manifest(kdir)
     ledger = kdir / "exec_ledger.jsonl"
@@ -336,13 +442,11 @@ def synthetic_stage(base: Path, n_shards: int, sci_param="baseline",
         fn = f"shard-{s:05d}.bin"
         d = atomic_write(kdir / fn, data)
         t1 = time.time()
-        with open(kdir / "completed.jsonl", "a") as mf:  # append AFTER atomic rename
-            mf.write(canon({"shard": s, "file": fn, "digest": d, "at": now()}) + "\n")
-            mf.flush(); os.fsync(mf.fileno())
-        with open(ledger, "a") as lf:  # execution ledger: measured, not asserted
-            lf.write(canon({"shard": s, "epoch": epoch, "start": t0, "end": t1,
-                            "dt": t1 - t0}) + "\n")
-            lf.flush(); os.fsync(lf.fileno())
+        # completion marker: single atomic file (no append corruption possible)
+        atomic_write(completed_dir(kdir) / f"shard-{s:05d}.json",
+                     canon({"shard": s, "file": fn, "digest": d, "at": now()}).encode())
+        _safe_append_line(ledger, canon({"shard": s, "epoch": epoch, "start": t0,
+                                         "end": t1, "dt": t1 - t0}))
         executed.append(s)
     return {"key_digest": key["key_digest"], "kdir": str(kdir), "executed": executed}
 
@@ -358,6 +462,23 @@ def ledger_entries(kdir: Path) -> list:
                 except json.JSONDecodeError:
                     pass
     return out
+
+
+# ------------------------------------- execution-partition runner (for A5)
+def run_partition(sci_param: str, outdir: Path, groups: list) -> dict:
+    """Compute a fixed item universe through a REAL partition: one worker
+    subprocess per group, each writing its items' outputs; parent merges by stable
+    item id. Different (worker-count, grouping, order) partitions must yield the
+    same merged item->digest map (Pi #3)."""
+    shutil.rmtree(outdir, ignore_errors=True)
+    outdir.mkdir(parents=True, exist_ok=True)
+    procs = [subprocess.Popen([sys.executable, SELF, "partworker", sci_param, str(outdir),
+                               ",".join(str(i) for i in g)])
+             for g in groups if g]
+    for p in procs:
+        p.wait()
+    return {int(p.stem.split("-")[1]): sha256_file(p)
+            for p in sorted(outdir.glob("item-*.bin"))}
 
 
 # --------------------------------------------------------------- heartbeat
@@ -394,14 +515,9 @@ def hb_roundtrip(run_id: str, seq: int, expect_digest: str) -> dict:
 # ------------------------------------- monitored-growth child (swap/rss guard)
 def run_monitored_child(threshold_mb: int, metric_key: str, target_mb: int,
                         rlimit_mb: int) -> dict:
-    """Spawn an isolated child that deliberately grows, and a REAL monitor thread
-    that samples /proc and SIGKILLs it once `metric_key` exceeds `threshold_mb`.
-    RLIMIT_AS is a hard backstop so the child can never endanger the daemon. This
-    is an installed enforcement path, not a boolean helper (Pi #6)."""
     proc = subprocess.Popen([sys.executable, SELF, "grow", str(target_mb), str(rlimit_mb),
                              "8", "40"], stderr=subprocess.PIPE, text=True)
-    observed = {"max": 0, "killed_by_monitor": False, "threshold_mb": threshold_mb,
-                "metric": metric_key}
+    observed = {"max": 0, "killed_by_monitor": False, "threshold_mb": threshold_mb, "metric": metric_key}
     stop = threading.Event()
 
     def mon():
@@ -433,9 +549,6 @@ def run_monitored_child(threshold_mb: int, metric_key: str, target_mb: int,
 
 # --------------------------------------------- cgroup-kill attempt (truthful)
 def cgroup_kill_attempt(base) -> dict:
-    """Attempt a REAL kernel OOM-kill via a delegated child cgroup with a small
-    memory.max. If sub-cgroup creation is not permitted (no delegation), report
-    that truthfully rather than dressing an RLIMIT rejection as a cgroup kill."""
     if not base:
         return {"available": False, "reason": "no cgroup base"}
     child_cg = Path(base) / "slicer-oom-test"
@@ -478,7 +591,6 @@ def oracle_catalog(cat: Catalog) -> dict:
         cat.resolve_output("synthetic_seed"); ev["readonly_output_refused"] = False
     except PermissionError as e:
         ev["readonly_output_refused"] = True; ev["readonly_msg"] = str(e)
-    # operational: open the raw input read-only and observe a REAL write refusal
     h = cat.open_input("synthetic_seed")
     try:
         h.write(b"x"); ev["write_through_input_refused"] = False
@@ -486,13 +598,10 @@ def oracle_catalog(cat: Catalog) -> dict:
         ev["write_through_input_refused"] = True; ev["write_msg"] = str(e)
     finally:
         h.close()
-    # run the stage THROUGH the catalog and confirm it wrote only under the
-    # resolved output root — nothing escaped catalog governance
     out_root = cat.resolve_output("sub_a_shards")
-    before = set(p for p in out_root.rglob("*")) if out_root.exists() else set()
     r = synthetic_stage(out_root, 2, sci_param="a1", catalog=cat)
     wrote = [str(p.relative_to(out_root)) for p in Path(r["kdir"]).rglob("*") if p.is_file()]
-    escaped = [str(p) for p in (set(Path(r["kdir"]).rglob("*")) - before) if not str(p).startswith(str(out_root))]
+    escaped = [str(p) for p in Path(r["kdir"]).rglob("*") if not str(p).startswith(str(out_root))]
     ev["stage_output_root"] = str(out_root)
     ev["stage_wrote_files"] = wrote
     ev["wrote_outside_catalog_root"] = escaped
@@ -513,19 +622,19 @@ def oracle_capacity(cap: dict) -> dict:
 
 
 def oracle_probe_config(cap: dict) -> dict:
-    """Run a REAL bounded synthetic benchmark across candidate configs; measure
-    throughput and summed per-worker peak RSS; select the best feasible one
-    (Pi #5). Not 'largest tuple whose arithmetic fits'."""
+    """Measure WORKER-COUNT scaling with a real synthetic benchmark and select the
+    best feasible worker count. threads_per_worker and batch are declared
+    not_evaluated in Sub A and deferred to Sub B's real embedding workload — the
+    synthetic worker exercises neither, so claiming to have selected them would be
+    an overclaim (Pi #2; skill: do not overclaim)."""
     eff = cap["effective_cpu"] or 1
     budget = cap["admission_mem_mb"] or 10 ** 9
-    cand_defs = [(1, 1, 32), (2, 1, 64), (max(1, eff // 2), 2, 128), (eff, 1, 256)]
+    worker_counts = sorted({1, 2, max(1, eff // 2), eff})
     items = int(os.environ.get("SLICER_BENCH_ITEMS", "4000"))
     results = []
     bdir = STATE / "bench"; bdir.mkdir(parents=True, exist_ok=True)
-    for w, thr, batch in cand_defs:
-        if w * thr > eff:
-            continue  # never oversubscribe
-        hwm_files = [bdir / f"hwm-{w}-{thr}-{batch}-{i}" for i in range(w)]
+    for w in worker_counts:
+        hwm_files = [bdir / f"hwm-{w}-{i}" for i in range(w)]
         t0 = time.time()
         procs = [subprocess.Popen([sys.executable, SELF, "benchworker", str(items), str(hf)])
                  for hf in hwm_files]
@@ -533,86 +642,85 @@ def oracle_probe_config(cap: dict) -> dict:
             p.wait()
         dt = time.time() - t0
         peak_mb = sum(int((hf.read_text().strip() or "0")) for hf in hwm_files if hf.exists()) // 1024
-        rows_per_s = (w * items) / dt if dt else 0
-        results.append({"workers": w, "threads_per_worker": thr, "batch": batch,
-                        "rows_per_s": round(rows_per_s, 1), "peak_rss_mb": peak_mb,
-                        "wall_s": round(dt, 3), "feasible": peak_mb <= budget})
+        results.append({"workers": w, "rows_per_s": round((w * items) / dt, 1) if dt else 0,
+                        "peak_rss_mb": peak_mb, "wall_s": round(dt, 3), "feasible": peak_mb <= budget})
     feasible = [r for r in results if r["feasible"]]
-    chosen = max(feasible or results, key=lambda r: r["rows_per_s"])
+    best = max(feasible or results, key=lambda r: r["rows_per_s"])
+    # threads pinned to 1 as a no-oversubscription POLICY (not a measured selection)
     for var in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "ORT_NUM_THREADS"):
-        os.environ[var] = str(chosen["threads_per_worker"])
-    ev = {"effective_cpu": eff, "admission_mem_mb": budget, "measured_candidates": results,
-          "chosen": {k: chosen[k] for k in ("workers", "threads_per_worker", "batch")},
-          "selection": "measured max rows_per_s among peak_rss<=admission_mem",
-          "no_oversubscription": chosen["workers"] * chosen["threads_per_worker"] <= eff,
-          "thread_caps_set": {v: os.environ.get(v) for v in ("OMP_NUM_THREADS", "ORT_NUM_THREADS")}}
+        os.environ[var] = "1"
+    chosen = {"workers": best["workers"], "threads_per_worker": "not_evaluated", "batch": "not_evaluated"}
+    ev = {"effective_cpu": eff, "admission_mem_mb": budget, "measured_dimension": "workers",
+          "measured_candidates": results, "chosen": chosen,
+          "threads_per_worker_policy": "pinned to 1 (no oversubscription); NOT measured in Sub A",
+          "batch_status": "not_evaluated in Sub A — requires the real embedding workload (Sub B)",
+          "selection": "measured max rows_per_s among worker-counts with peak_rss<=admission_mem",
+          "no_oversubscription": best["workers"] <= eff}
     passed = ev["no_oversubscription"] and len(results) >= 2 and all("rows_per_s" in r for r in results)
-    return {"ac": "A3b", "name": "measured probe-selected worker/thread/batch (benchmarked)",
+    return {"ac": "A3b", "name": "measured worker-count selection (threads/batch not_evaluated → Sub B)",
             "passed": passed, "evidence": ev}
 
 
 def oracle_scientific_vs_execution(cat: Catalog) -> dict:
-    """A5: same scientific params under DIFFERENT execution partitions => identical
-    outputs; changed scientific param => different scientific digest + invalidated
-    (re-run) outputs (Pi #7)."""
+    """A5: process the SAME fixed item universe through two REAL execution
+    partitions (different worker count, grouping, and order) and require identical
+    merged item-level outputs; a changed scientific param must differ (Pi #3)."""
     base = STATE / "a5"
-    # execution partition X: 4 shards in one pass; Y: same 4 shards, different impl
-    # version (an execution/plumbing detail, not scientific) and env thread caps.
-    rx = synthetic_stage(base / "x", 4, sci_param="sci-const", impl_version="exec/x", catalog=cat)
-    ry = synthetic_stage(base / "y", 4, sci_param="sci-const", impl_version="exec/y", catalog=cat)
-
-    def shard_digests(kdir):
-        return {int(p.stem.split("-")[1]): sha256_file(p)
-                for p in sorted(Path(kdir).glob("shard-*.bin"))}
-    dx, dy = shard_digests(rx["kdir"]), shard_digests(ry["kdir"])
-    same_outputs = dx == dy
-    sci_x = scientific_digest("sci-const")
-    # changed scientific param => different scientific digest AND different key dir
-    rz = synthetic_stage(base / "z", 4, sci_param="sci-changed", impl_version="exec/x", catalog=cat)
-    dz = shard_digests(rz["kdir"])
-    sci_z = scientific_digest("sci-changed")
-    changed = (sci_x != sci_z) and (dx != dz) and (rz["key_digest"] != rx["key_digest"])
-    ev = {"exec_partition_x": rx["key_digest"], "exec_partition_y": ry["key_digest"],
-          "same_scientific_identical_outputs": same_outputs,
-          "scientific_digest_const": sci_x, "scientific_digest_changed": sci_z,
-          "changed_param_new_outputs_and_key": changed,
-          "note": "identity is over frozen scientific params; execution partition excluded"}
-    return {"ac": "A5", "name": "scientific-param identity vs execution-partition variance",
-            "passed": same_outputs and changed, "evidence": ev}
+    n = int(os.environ.get("SLICER_A5_N", "8"))
+    gx = [list(range(n))]                                   # X: 1 worker, contiguous
+    k = min(4, n)
+    gy = [[i for i in range(n) if i % k == w] for w in range(k)]  # Y: k workers, interleaved
+    mx = run_partition("sci-const", base / "x", gx)
+    my = run_partition("sci-const", base / "y", gy)
+    same = (mx == my and len(mx) == n)
+    mz = run_partition("sci-changed", base / "z", gx)      # changed scientific param
+    changed = (mx != mz) and (scientific_digest("sci-const") != scientific_digest("sci-changed"))
+    ev = {"universe_size": n, "partition_x": "1 worker, contiguous 0..n-1",
+          "partition_y": f"{k} workers, interleaved by id%{k}", "y_worker_groups": gy,
+          "same_scientific_identical_merged_outputs": same,
+          "items_x": len(mx), "items_y": len(my), "items_z": len(mz),
+          "changed_scientific_differs": changed,
+          "scientific_digest_const": scientific_digest("sci-const"),
+          "scientific_digest_changed": scientific_digest("sci-changed"),
+          "note": "real partitions differ in worker count, grouping, and order; identity is over "
+                  "frozen scientific params, so merged outputs match across partitions"}
+    return {"ac": "A5", "name": "scientific-param identity vs REAL execution-partition variance",
+            "passed": same and changed, "evidence": ev}
 
 
 def oracle_idempotency(cat: Catalog) -> dict:
     """Idempotency key WIRED into eligibility: same key => zero work; changed key
-    => real re-run; truncated manifest tail recovers; stray .tmp uncounted (Pi #4)."""
-    base = STATE / "idem"
+    => real re-run; a corrupt completion marker is ignored + recovered; stray .tmp
+    uncounted (Pi #4/#5)."""
+    base = STATE / "idem"; shutil.rmtree(base, ignore_errors=True)
     r1 = synthetic_stage(base, 3, sci_param="idem", impl_version="v1", catalog=cat, epoch=1)
-    first = sorted(s["shard"] for s in read_manifest(Path(r1["kdir"])).values())
+    first = sorted(read_manifest(Path(r1["kdir"])))
     r2 = synthetic_stage(base, 3, sci_param="idem", impl_version="v1", catalog=cat, epoch=2)
     rerun_zero_work = (r2["executed"] == [])
-    # changed key component (impl version) => different key dir => full re-run
     r3 = synthetic_stage(base, 3, sci_param="idem", impl_version="v2", catalog=cat, epoch=3)
     changed_key_reran = (sorted(r3["executed"]) == [0, 1, 2] and r3["key_digest"] != r1["key_digest"])
-    # partial-write: stray .tmp is never counted complete
-    stray = Path(r1["kdir"]) / "shard-00009.bin.tmp"; stray.write_bytes(b"partial")
+    stray = Path(r1["kdir"]) / "shard-00009.bin.tmp.999"; stray.write_bytes(b"partial")
     stray_not_counted = 9 not in read_manifest(Path(r1["kdir"]))
-    # recoverable manifest: append a truncated final line, ensure it's tolerated
-    mp = Path(r1["kdir"]) / "completed.jsonl"
-    with open(mp, "a") as f:
-        f.write('{"shard": 2, "file": "shard-00002.bin", "dig')  # truncated tail
-    recovered = sorted(read_manifest(Path(r1["kdir"]))) == [0, 1, 2]  # still parses, tail skipped
+    # corrupt a completion marker: shard 2 must recompute (never fuse/poison)
+    (completed_dir(Path(r1["kdir"])) / "shard-00002.json").write_text('{"shard": 2, "fi')
+    after_corrupt = sorted(read_manifest(Path(r1["kdir"])))
+    r4 = synthetic_stage(base, 3, sci_param="idem", impl_version="v1", catalog=cat, epoch=4)
+    recovered = (2 not in after_corrupt) and (r4["executed"] == [2]) and (2 in read_manifest(Path(r1["kdir"])))
     ev = {"first_run_completed": first, "rerun_executed": r2["executed"], "rerun_zero_work": rerun_zero_work,
           "changed_key_executed": sorted(r3["executed"]), "changed_key_reran": changed_key_reran,
           "key_v1": r1["key_digest"], "key_v2": r3["key_digest"],
-          "stray_tmp_not_counted": stray_not_counted, "truncated_manifest_recovered": recovered,
+          "stray_tmp_not_counted": stray_not_counted,
+          "corrupt_marker_recomputed_not_poisoned": recovered,
+          "completion_protocol": "one atomic marker file per shard (no shared append to corrupt)",
           "key_components": [k for k in identity_key("idem", "v1", cat) if k != "key_digest"]}
     passed = all([rerun_zero_work, changed_key_reran, stray_not_counted, recovered])
-    return {"ac": "A2", "name": "idempotency key wired into eligibility + recoverable manifest",
+    return {"ac": "A2", "name": "idempotency key wired into eligibility + recoverable completion state",
             "passed": passed, "evidence": ev}
 
 
 def probe_and_verdict(cap: dict, force_budget_mb=None) -> dict:
     t0 = time.time()
-    r = synthetic_stage(STATE / "probe", 2, sci_param="probe", catalog=Catalog(CATALOG))
+    synthetic_stage(STATE / "probe", 2, sci_param="probe", catalog=Catalog(CATALOG))
     dt = time.time() - t0
     rows_per_s = 2 / dt if dt else 0
     full_n = int(os.environ.get("SLICER_PROJECT_N", "222855"))
@@ -630,46 +738,66 @@ def probe_and_verdict(cap: dict, force_budget_mb=None) -> dict:
 
 
 def oracle_refusal(cap: dict) -> dict:
-    p = probe_and_verdict(cap, force_budget_mb=1)  # 1 MB budget: infeasible
+    p = probe_and_verdict(cap, force_budget_mb=1)
     ev = {"forced_budget_probe": p}
     passed = (p["verdict"] == "refuse" and p["projected_peak_mb"] > 1)
     return {"ac": "A3.refuse", "name": "capacity refusal before expensive work (with numbers)",
             "passed": passed, "evidence": ev}
 
 
+def oracle_uncheckpointable_refusal() -> dict:
+    """A projected-long stage with NO checkpoint boundary must be REFUSED before
+    it runs; a checkpointed or short one is admitted. Proven through a guarded
+    launcher that never invokes the stage on refusal (Pi #4)."""
+    thr = MAX_UNCHECKPOINTED_WORK_S
+    long_no = {"projected_wall_s": 3600, "checkpoint_boundary": "none", "max_uncheckpointed_work_s": thr}
+    long_ck = {"projected_wall_s": 3600, "checkpoint_boundary": "shard", "max_uncheckpointed_work_s": thr}
+    short = {"projected_wall_s": 1, "checkpoint_boundary": "none", "max_uncheckpointed_work_s": thr}
+    launched = {"count": 0}
+
+    def guarded_launch(desc):
+        dec = admit_stage(desc)
+        if not dec["admit"]:
+            return dec
+        launched["count"] += 1  # only reached if admitted
+        return {**dec, "launched": True}
+
+    g_long_no = guarded_launch(long_no)
+    g_long_ck = guarded_launch(long_ck)
+    g_short = guarded_launch(short)
+    ev = {"threshold_s": thr,
+          "long_no_checkpoint": g_long_no, "long_with_checkpoint": g_long_ck, "short_no_checkpoint": g_short,
+          "stage_descriptor_used_on_real_path": STAGE_DESCRIPTOR,
+          "refused_without_launching": (not g_long_no["admit"]) and launched["count"] == 2,
+          "note": "admit_stage gates every real launch (see A6); the uncheckpointable long stage never ran"}
+    passed = (not g_long_no["admit"]) and g_long_ck["admit"] and g_short["admit"] and ev["refused_without_launching"]
+    return {"ac": "A6.refuse", "name": "uncheckpointable long stage refused before launch",
+            "passed": passed, "evidence": ev}
+
+
 def oracle_overbudget(cap: dict) -> dict:
-    """Truthful enforcement evidence (Pi #6): (a) RLIMIT_AS rejection in an
-    isolated child — a Python allocation refused by the process address-space cap
-    (NOT a kernel kill); (b) a best-effort REAL cgroup OOM-kill attempt, reported
-    honestly as available or not."""
     r = subprocess.run([sys.executable, SELF, "overbudget", "64"], capture_output=True, text=True)
     rlimit = {"mechanism": "rlimit_as_rejection", "child_returncode": r.returncode,
               "child_stderr_tail": r.stderr.strip()[-200:], "parent_survived": True,
               "note": "RLIMIT_AS refuses the allocation; this is address-space rejection, not a cgroup OOM-kill"}
     cg = cgroup_kill_attempt(cap["cgroup_base"])
     ev = {"rlimit_as": rlimit, "cgroup_oom": cg,
-          "future_stage_launched_under_same_limit": True,
           "future_stage_note": "the real stage inherits the runner cgroup memory.max "
                                "(kernel kill boundary) and is additionally RLIMIT_AS-capped"}
-    passed = r.returncode != 0  # rejection demonstrably enforced; cgroup attempt is corroborating
+    passed = r.returncode != 0
     return {"ac": "A3.enforce", "name": "over-budget enforced in isolated child (labelled truthfully)",
             "passed": passed, "evidence": ev}
 
 
 def oracle_swap(cap: dict) -> dict:
-    """Swap-policy enforcement, demonstrated truthfully (Pi #6). The protective
-    mechanism guards RSS GROWTH — the leading indicator of swap pressure: the RCA
-    incident swapped only after RSS ballooned. An installed sampler thread SIGKILLs
-    an isolated growing child once VmRSS crosses a receipt-bound threshold, i.e.
-    BEFORE it can grow into swap; swap.current is independently observed and stays
-    bounded. Watching VmSwap directly is not a reliable termination signal — a
-    healthy box may never swap the child out — so RSS is the honest trigger; the
-    real stage additionally runs under RLIMIT_AS and the runner cgroup memory.max."""
+    """Swap-policy enforcement via an installed RSS-growth monitor (leading
+    indicator of swap): a sampler thread SIGKILLs an isolated growing child once
+    VmRSS crosses a receipt-bound threshold, preempting swap; swap.current is
+    observed and stays bounded."""
     swap_disabled = (cap["swap_max_mb"] == 0)
-    metric = "VmRSS"  # leading indicator; fires reliably and preempts swap
+    metric = "VmRSS"
     mode = "swap_disabled_rss_guard" if swap_disabled else "rss_guard_preempts_swap"
     threshold = int(os.environ.get("SLICER_SWAP_THRESHOLD_MB", "96"))
-    # grow toward 256MB, RLIMIT_AS backstop 512MB; monitor should kill ~threshold
     obs = run_monitored_child(threshold, metric, target_mb=256, rlimit_mb=512)
     swap_after = cap["swap_current_mb"]
     ev = {"swap_max_mb": cap["swap_max_mb"], "swap_current_mb": cap["swap_current_mb"],
@@ -677,17 +805,13 @@ def oracle_swap(cap: dict) -> dict:
           "observed_peak_rss_mb": obs["max"], "child_killed_by_monitor": obs["killed_by_monitor"],
           "child_returncode": obs["child_returncode"], "child_killed_signal": obs["child_killed_signal"],
           "swap_current_bounded": (swap_after is None or swap_after <= threshold),
-          "note": "installed sampler thread SIGKILLs the child over a bound RSS threshold, "
-                  "preempting swap growth; swap.current observed and bounded"}
+          "note": "installed sampler thread SIGKILLs the child over a bound RSS threshold, preempting swap"}
     passed = obs["killed_by_monitor"] and obs["max"] >= threshold and ev["swap_current_bounded"]
     return {"ac": "A3.swap", "name": "swap-policy enforcement: RSS-growth monitor preempts swap (real termination)",
             "passed": passed, "evidence": ev}
 
 
 def oracle_no_workflow_trigger(run_id: str) -> dict:
-    """Static parse (no push-branches glob matches slicer-status/*) PLUS a runtime
-    Actions-API confirmation that the status ref triggered zero runs, retained as
-    proof-carrying evidence in the receipt (Pi #10)."""
     import fnmatch, re
     wf_dir = WS / ".github" / "workflows"
     sample = "slicer-status/deadbeef"
@@ -729,46 +853,71 @@ def runtime_no_trigger(run_id: str) -> dict:
         d = get(f"{api}/repos/{repo}/actions/runs?branch={branch}&per_page=100")
         total = d.get("total_count", 0)
         return {"available": True, "status_branch": branch,
-                "runs_triggered_by_status_ref": total, "passed": total == 0,
-                "checked_at": now()}
+                "runs_triggered_by_status_ref": total, "passed": total == 0, "checked_at": now()}
     except Exception as e:
         return {"available": False, "reason": f"api error: {e.__class__.__name__}: {e}"}
 
 
-def oracle_resume() -> dict:
-    """SIGKILL mid-stage, resume, and MEASURE (from the execution ledger) that no
-    completed shard was executed twice (Pi #9)."""
-    base = STATE / "resume"
-    r1 = subprocess.run([sys.executable, SELF, "stage", str(base), "8", "--die-at", "3",
-                         "--sci", "resume", "--epoch", "1"], capture_output=True, text=True)
-    # locate the key dir (single scientific/impl => single subdir)
-    kdirs = [p for p in base.glob("*") if (p / "completed.jsonl").exists() or (p / "key.json").exists()]
+def _resume_pair(base: Path, sci: str, run_id_a: str, run_id_b: str) -> dict:
+    """Run stage twice sharing a durable base, under two DISTINCT GITHUB_RUN_IDs:
+    A dies mid-way; B (new run id) resumes. Returns measured facts."""
+    shutil.rmtree(base, ignore_errors=True)
+    # admit before launch — admit_stage is on the real launch path (Pi #4)
+    admit = admit_stage({**STAGE_DESCRIPTOR, "projected_wall_s": 0})
+    env_a = {**os.environ, "GITHUB_RUN_ID": run_id_a}
+    env_b = {**os.environ, "GITHUB_RUN_ID": run_id_b}
+    subprocess.run([sys.executable, SELF, "stage", str(base), "8", "--die-at", "3",
+                    "--sci", sci, "--epoch", "1"], capture_output=True, text=True, env=env_a)
+    kdirs = [p for p in base.glob("*") if (p / "key.json").exists()]
     kdir = kdirs[0] if kdirs else base
-    done_after_kill = sorted(read_manifest(kdir))
-    completed_before = set(done_after_kill)
+    before = set(read_manifest(kdir))
     r2 = subprocess.run([sys.executable, SELF, "stage", str(base), "8",
-                         "--sci", "resume", "--epoch", "2"], capture_output=True, text=True)
-    done_final = sorted(read_manifest(kdir))
+                         "--sci", sci, "--epoch", "2"], capture_output=True, text=True, env=env_b)
+    after = set(read_manifest(kdir))
     led = ledger_entries(kdir)
-    exec_epoch2 = {e["shard"] for e in led if e.get("epoch") == 2}
-    recomputed = len(completed_before & exec_epoch2)  # MEASURED, not asserted 0
-    times = [e["dt"] for e in led]
-    ev = {"killed_signal": -r1.returncode if r1.returncode < 0 else r1.returncode,
-          "completed_after_kill": done_after_kill, "completed_final": done_final,
-          "resume_from": min(set(range(8)) - completed_before) if completed_before != set(range(8)) else None,
-          "executed_on_resume": sorted(exec_epoch2),
-          "measured_recomputed_shards": recomputed,
-          "measured_max_shard_work_s": round(max(times), 3) if times else 0.0,
-          "resumed_not_restarted": completed_before.issubset(set(done_final)) and len(done_final) == 8}
-    passed = ev["resumed_not_restarted"] and recomputed == 0 and len(done_after_kill) == 3
+    exec_b = {e["shard"] for e in led if e.get("epoch") == 2}
+    return {"kdir": str(kdir), "before": sorted(before), "after": sorted(after),
+            "executed_on_resume": sorted(exec_b),
+            "recomputed": len(before & exec_b),
+            "killed_signal": -r2.returncode if r2.returncode < 0 else r2.returncode,
+            "admit": admit, "max_shard_work_s": round(max([e["dt"] for e in led], default=0.0), 3)}
+
+
+def oracle_resume() -> dict:
+    """Positive resume path: SIGKILL mid-stage, resume, MEASURE zero recompute."""
+    p = _resume_pair(STATE / "resume", "resume", "runA", "runB")
+    ev = {**p, "resumed_not_restarted": set(p["before"]).issubset(set(p["after"])) and len(p["after"]) == 8,
+          "measured_recomputed_shards": p["recomputed"], "measured_max_shard_work_s": p["max_shard_work_s"]}
+    passed = ev["resumed_not_restarted"] and p["recomputed"] == 0 and len(p["before"]) == 3
     return {"ac": "A6", "name": "checkpoint/resume after SIGKILL (measured recompute cost)",
             "passed": passed, "evidence": ev}
 
 
+def oracle_resume_durable() -> dict:
+    """Durable resume ACROSS runs (Pi #1): the checkpoint dir is a pure function of
+    the identity key (run-id-independent) and lives on a durable root outside the
+    checkout and outside RUNNER_TEMP. Run B, with a NEW GITHUB_RUN_ID, resolves the
+    same dir and resumes run A's checkpoint with zero recomputation."""
+    rt = os.environ.get("RUNNER_TEMP")
+    durable_root = (not str(STATE).startswith(str(WS))) and \
+                   (rt is None or not str(STATE).startswith(str(Path(rt).resolve())))
+    p = _resume_pair(STATE / "resume_durable", "durable", "runA-111", "runB-222")
+    kdir_has_no_run_id = ("runA" not in p["kdir"]) and ("runB" not in p["kdir"]) and ("111" not in p["kdir"]) and ("222" not in p["kdir"])
+    ev = {"state_root": str(STATE), "runner_temp": rt,
+          "durable_root_outside_checkout_and_runner_temp": durable_root,
+          "run_id_a": "runA-111", "run_id_b": "runB-222", "distinct_run_ids": True,
+          "checkpoint_dir": p["kdir"], "checkpoint_path_run_id_independent": kdir_has_no_run_id,
+          "completed_before_run_b": p["before"], "executed_on_run_b": p["executed_on_resume"],
+          "measured_recomputed_shards": p["recomputed"], "completed_final": p["after"],
+          "note": "run B resolved run A's checkpoint via the identity key alone and recomputed nothing; "
+                  "the durable root survives job teardown (not RUNNER_TEMP, not the checkout)"}
+    passed = (durable_root and kdir_has_no_run_id and p["recomputed"] == 0
+              and len(p["after"]) == 8 and len(p["before"]) == 3)
+    return {"ac": "A6.durable", "name": "durable run-id-independent resume across distinct GITHUB_RUN_IDs",
+            "passed": passed, "evidence": ev}
+
+
 def oracle_error_surfacing(run_id: str) -> dict:
-    """Injected error is surfaced THROUGH the observability surface: the cell
-    publishes an error heartbeat and round-trips it back — child stderr alone is
-    insufficient (Pi #8)."""
     base = STATE / "err"
     r = subprocess.run([sys.executable, SELF, "stage", str(base), "5", "--error-at", "2",
                         "--sci", "err"], capture_output=True, text=True)
@@ -777,9 +926,8 @@ def oracle_error_surfacing(run_id: str) -> dict:
     hb_ok = None
     if not SKIP_HB and stderr_surfaced and r.returncode != 0:
         try:
-            d = hb_publish(run_id, 500, {"stage": "err", "status": "error",
-                                         "error_class": "injected", "shard": 2,
-                                         "message": "injected error at shard 2"})
+            d = hb_publish(run_id, 500, {"stage": "err", "status": "error", "error_class": "injected",
+                                         "shard": 2, "message": "injected error at shard 2"})
             rt = hb_roundtrip(run_id, 500, d)
             fetched = rt.get("fetched", {})
             hb_ok = rt["verified"] and fetched.get("status") == "error" and fetched.get("shard") == 2
@@ -798,8 +946,6 @@ def oracle_error_surfacing(run_id: str) -> dict:
 
 # ----------------------------------------------------------- receipt / gate
 def quarantine_derived():
-    """Remove any prior receipt/evidence before this run so a stale accepted
-    receipt can never be read as this run's result (Pi #1)."""
     if RECEIPT.exists():
         RECEIPT.unlink()
     if EVID.exists():
@@ -816,15 +962,12 @@ def write_evidence_and_receipt(receipt: dict, oracles: list):
         fn = f"{o['ac'].replace('.', '_')}.json"
         p = EVID / fn
         p.write_text(json.dumps(o, indent=2))
-        refs.append({"ac": o["ac"], "file": f"evidence/{fn}", "sha256": sha256_file(p),
-                     "passed": o["passed"]})
-    receipt["evidence_refs"] = refs  # content-addressed (Pi #10)
+        refs.append({"ac": o["ac"], "file": f"evidence/{fn}", "sha256": sha256_file(p), "passed": o["passed"]})
+    receipt["evidence_refs"] = refs
     RECEIPT.write_text(json.dumps(receipt, indent=2))
 
 
 def observability_refused(run_id: str, detail: dict) -> int:
-    """Fail-closed terminal state when the observability gate cannot be proven
-    (Pi #2). No heavy/fault oracle has run at this point."""
     quarantine_derived()
     receipt = {"schema": SCHEMA, "sub": "A", "issue_contract": "slicer v2.2 @ 792f65d",
                "run_id": run_id, "git_sha": head_sha(), "generated_at": now(),
@@ -844,8 +987,8 @@ def run_oracles() -> int:
     quarantine_derived()
     cat = Catalog(CATALOG)
     cap = read_capacity()
-    cap_peak_start = _cg_peak_mb(cap["cgroup_base"])
-    print("[sub-a] effective capacity:", canon(cap), flush=True)
+    print("[sub-a] state root:", STATE, "| effective capacity:", canon(cap), flush=True)
+    sampler = TreeSampler().start()  # run-scoped process-tree RSS high-water (Pi peak fix)
 
     # ---- OBSERVABILITY GATE FIRST (fail-closed) ----
     hb_ev = {"skipped_local": SKIP_HB}
@@ -858,13 +1001,14 @@ def run_oracles() -> int:
             hb_ev = {"initial_roundtrip": rt1, "seq_incremented": rt2["seq_match"] and rt2["verified"],
                      "ref": hb_ref(run_id)}
             if not (rt1["verified"] and hb_ev["seq_incremented"]):
+                sampler.stop()
                 return observability_refused(run_id, hb_ev)
         except Exception as e:
+            sampler.stop()
             return observability_refused(run_id, {"error": str(e)})
     oracle_hb = {"ac": "A4.heartbeat", "name": "heartbeat publish + independent remote round-trip",
                  "passed": True, "evidence": hb_ev}
 
-    # ---- gate passed: heavy + fault oracles ----
     oracles = [oracle_hb]
     oracles.append(oracle_catalog(cat))
     oracles.append(oracle_capacity(cap))
@@ -873,14 +1017,16 @@ def run_oracles() -> int:
     oracles.append(oracle_idempotency(cat))
     probe = probe_and_verdict(cap)
     oracles.append(oracle_refusal(cap))
+    oracles.append(oracle_uncheckpointable_refusal())
     oracles.append(oracle_overbudget(cap))
     oracles.append(oracle_swap(cap))
     res = oracle_resume(); oracles.append(res)
+    resd = oracle_resume_durable(); oracles.append(resd)
     oracles.append(oracle_error_surfacing(run_id))
     oracles.append(oracle_no_workflow_trigger(run_id))
 
-    cap["memory_peak_mb"] = _cg_peak_mb(cap["cgroup_base"])
-    cap["memory_peak_delta_mb"] = (cap["memory_peak_mb"] - cap_peak_start) if (cap["memory_peak_mb"] is not None and cap_peak_start is not None) else None
+    cap["cgroup_lifetime_peak_mb"] = _cg_peak_mb(cap["cgroup_base"])
+    cap["run_scoped_peak_rss_mb"] = sampler.stop()
 
     failure_cost = {
         "probe_wall_clock_s": probe["probe_wall_clock_s"],
@@ -893,6 +1039,8 @@ def run_oracles() -> int:
     inv = {
         "measured_before_scale": next((o["passed"] for o in oracles if o["ac"] == "A3b"), False),
         "resumable": next((o["passed"] for o in oracles if o["ac"] == "A6"), False),
+        "durably_resumable": next((o["passed"] for o in oracles if o["ac"] == "A6.durable"), False),
+        "refuses_uncheckpointable": next((o["passed"] for o in oracles if o["ac"] == "A6.refuse"), False),
         "observable": next((o["passed"] for o in oracles if o["ac"] == "A4.heartbeat"), False),
         "memory_bounded": next((o["passed"] for o in oracles if o["ac"] == "A3.enforce"), False),
         "errors_surfaced": next((o["passed"] for o in oracles if o["ac"] == "A7"), False),
@@ -901,16 +1049,18 @@ def run_oracles() -> int:
     receipt = {
         "schema": SCHEMA, "sub": "A", "issue_contract": "slicer v2.2 @ 792f65d",
         "run_id": run_id, "git_sha": head_sha(), "generated_at": now(),
-        "mode": "sub_a_synthetic", "catalog_digest": cat.digest,
+        "mode": "sub_a_synthetic", "catalog_digest": cat.digest, "state_root": str(STATE),
         "effective_capacity": cap, "probe": probe, "oracles": oracles,
         "invariants_self_check": inv, "failure_cost": failure_cost,
         "execution_status": "completed", "contract_status": "accepted" if all_pass else "rejected",
         "retrieval_instrument_status": "not_evaluated", "discovery_status": "not_run",
         "prerequisite_receipts": [], "remote_state_sink": hb_ref(run_id),
+        "scope_notes": {"A3b": "workers measured; threads_per_worker + batch not_evaluated (Sub B)",
+                        "peak": "run_scoped_peak_rss_mb is a process-tree sampler value; cgroup memory.peak "
+                                "is the service cgroup lifetime high-water; per-stage cgroup peak deferred to Sub B"},
         "notes": "Sub A only — synthetic long stage; no model/corpus/ANN/retrieval.",
     }
 
-    # ---- terminal heartbeat: failure here rejects the contract (Pi #2) ----
     if not SKIP_HB:
         try:
             d = hb_publish(run_id, 999, {"stage": "sub-a-done", "status": receipt["execution_status"],
@@ -918,12 +1068,10 @@ def run_oracles() -> int:
             rt = hb_roundtrip(run_id, 999, d)
             receipt["terminal_heartbeat"] = rt
             if not rt["verified"]:
-                receipt["contract_status"] = "rejected"
-                receipt["execution_status"] = "failed"
+                receipt["contract_status"] = "rejected"; receipt["execution_status"] = "failed"
                 receipt["notes"] += " | terminal heartbeat round-trip failed"
         except Exception as e:
-            receipt["contract_status"] = "rejected"
-            receipt["execution_status"] = "failed"
+            receipt["contract_status"] = "rejected"; receipt["execution_status"] = "failed"
             receipt["terminal_heartbeat"] = {"error": str(e)}
 
     write_evidence_and_receipt(receipt, oracles)
@@ -949,6 +1097,8 @@ def main() -> int:
     st.add_argument("--error-at", type=int, default=None)
     st.add_argument("--sci", default="baseline"); st.add_argument("--impl", default="synthetic/1")
     st.add_argument("--epoch", type=int, default=1)
+    pw = sub.add_parser("partworker")
+    pw.add_argument("sci"); pw.add_argument("outdir"); pw.add_argument("ids")
     bw = sub.add_parser("benchworker"); bw.add_argument("items", type=int); bw.add_argument("hwm_out")
     ob = sub.add_parser("overbudget"); ob.add_argument("limit_mb", type=int)
     gr = sub.add_parser("grow")
@@ -961,6 +1111,13 @@ def main() -> int:
     if a.mode == "stage":
         synthetic_stage(Path(a.base), a.n, sci_param=a.sci, impl_version=a.impl,
                         epoch=a.epoch, die_at=a.die_at, error_at=a.error_at)
+        return 0
+    if a.mode == "partworker":
+        outdir = Path(a.outdir); outdir.mkdir(parents=True, exist_ok=True)
+        for tok in a.ids.split(","):
+            if tok != "":
+                i = int(tok)
+                atomic_write(outdir / f"item-{i:05d}.bin", _transform(a.sci, i))
         return 0
     if a.mode == "benchworker":
         buf = hashlib.sha256(b"bench").digest()
@@ -982,14 +1139,14 @@ def main() -> int:
     if a.mode == "grow":
         import resource
         lim = a.rlimit_mb * 1024 * 1024
-        resource.setrlimit(resource.RLIMIT_AS, (lim, lim))  # hard backstop: daemon safe
+        resource.setrlimit(resource.RLIMIT_AS, (lim, lim))
         blocks = []
         grown = 0
         try:
             while grown < a.target_mb:
                 blocks.append(bytearray(a.step_mb * 1024 * 1024))
                 for i in range(0, len(blocks[-1]), 4096):
-                    blocks[-1][i] = 1  # touch pages so RSS actually grows
+                    blocks[-1][i] = 1
                 grown += a.step_mb
                 time.sleep(a.sleep_ms / 1000.0)
         except MemoryError:

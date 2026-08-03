@@ -48,6 +48,11 @@ jobs:
         run: |
           git config user.name "cn-sigma-runner"
           git config user.email "runner@cn-sigma"
+          # DURABLE checkpoint root outside the checkout and outside RUNNER_TEMP
+          # (RUNNER_TEMP is emptied each job; this path persists across jobs).
+          export SLICER_STATE_DIR="$HOME/.cmp/slicer/state"
+          mkdir -p "$SLICER_STATE_DIR"
+          echo "state_root=$SLICER_STATE_DIR"
           set +e
           python3 scripts/slicer_sub_a.py oracles
           echo "rc=$?" >> "$GITHUB_OUTPUT"
