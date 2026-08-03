@@ -1,10 +1,15 @@
 # Box job admission — design
 
-**Status:** `v0.1.0` — **design only, nothing built.** For review before any code.
-**Author:** ω (Omega), operator's agent, outside the cell.
-**Applies:** cnos.eng `evolve` (boundary moves), `code` (make invalid states harder
-to express), `process-economics` (every step earns its cost), core `design`
-(hide volatile decisions behind stable contracts), L7 (`ENGINEERING-LEVELS.md`).
+**Status:** `v0.2.0` — **design only, nothing built. Finalized for Pi review.**
+**Design:** ω (Omega), operator's agent, outside the cell.
+**Finalized for review:** δ (cloud Sigma) — added acceptance criteria (§6),
+an L1-probe-derived timeout (§4.3), per-job cgroup peak (§4.1), and resolved the
+open questions (§8). ω's design substance (§1–§5) is preserved.
+**Applies:** cnos.eng `evolve` (boundary moves), `code` (make invalid states
+harder to express), `process-economics` (every step earns its cost), core
+`design` (hide volatile decisions behind stable contracts), `performance-
+reliability` (budgets, failure, recovery, operator-visible truth), L7
+(`ENGINEERING-LEVELS.md`).
 
 ---
 
@@ -27,7 +32,8 @@ runner", which would have reintroduced Slicer's stage runner under a second name
 — the failure the core `design` skill names explicitly ("the same concept is not
 reintroduced under a second name somewhere else"). Slicer already anticipates
 this split: its stages are *"transforms that do not care what invokes them."*
-This document is what invokes them.
+This document is what invokes them. (A parallel δ draft, `box-ref-runner.md`, hit
+the same second-name failure and was retired into this one.)
 
 ---
 
@@ -105,7 +111,7 @@ What disappears, structurally rather than by discipline:
 
 **Where this could fail (the stated L7 limit — over-abstraction):** if it grows
 into a general workflow engine — DAGs, retries, matrices, dynamic registration —
-it becomes system weight serving one consumer. §6 lists what is deliberately
+it becomes system weight serving one consumer. §7 lists what is deliberately
 excluded to prevent that. The whole admission layer should be small enough to
 read in one sitting; if it is not, this design was wrong.
 
@@ -122,7 +128,12 @@ refs/heads/jobs/status/<id>  box writes; anyone reads          — lifecycle
 
 Both orphan, append-only, fast-forward-only. Single writer each — the same
 invariant the r0 boxes already use (cnos#690), so this introduces no new
-concept.
+concept. No ref is ever deleted (the git proxy blocks ref deletion regardless);
+terminal states are tombstones, not removals.
+
+**Who may write `jobs/queue` (resolved, §8-1):** a **dedicated deploy key scoped
+to that ref**, not the shared token. This makes "who can make the box compute"
+independently answerable and revocable without touching other automation.
 
 **Why git and not a queue system:** both sides already have git, credentials,
 and durability. A message broker would add infrastructure, secrets, and a
@@ -160,12 +171,12 @@ argv. A request cannot express "run this"; only "run the thing you already call
 ```yaml
 jobs:
   slicer:
-    exec:    /opt/cmp/bin/slicer-run
-    user:    cmpjob
-    memory:  10G
-    cpu:     600%
-    timeout: 6h
-    params:  {mode: [sample, full], n: {type: int, max: 400000}}
+    exec:        /opt/cmp/bin/slicer-run
+    user:        cmpjob
+    memory:      10G
+    cpu:         600%
+    timeout_cap: 6h          # HARD CEILING; effective timeout is derived (§4.3)
+    params:      {mode: [sample, full], n: {type: int, max: 400000}}
 ```
 
 If the registry lived in the repo, anyone who can push could add a job — and the
@@ -207,9 +218,10 @@ Every admitted job runs as a **systemd transient unit**:
 ```
 systemd-run --unit=cmpjob-<id> --collect
             --uid=cmpjob
-            --property=MemoryMax=<registry>
-            --property=CPUQuota=<registry>
-            --property=RuntimeMaxSec=<registry>
+            --property=MemoryMax=<registry.memory>
+            --property=MemorySwapMax=0
+            --property=CPUQuota=<registry.cpu>
+            --property=RuntimeMaxSec=<derived §4.3>
             -- <registry.exec> <validated params>
 ```
 
@@ -225,6 +237,12 @@ Rationale, each point earned this week:
 - **`systemctl show` is the authoritative run state** — the box does not have to
   track liveness itself.
 - **`RuntimeMaxSec`** — a wedged job dies rather than holding the box.
+- **per-job cgroup peak** — because the job has its own transient-unit cgroup,
+  `memory.peak` of `cmpjob-<id>` is a **true per-job high-water**. The poller
+  reads it into the terminal status. This is exactly the *delegated per-stage
+  cgroup peak* Slicer Sub A's receipt flagged as unavailable under the shared
+  runner-service cgroup and deferred to Sub B — the admission layer supplies it
+  for free.
 
 ### 4.2 Identity
 
@@ -239,7 +257,22 @@ need root, and giving it root couples job compromise to box compromise.
 Status is published by the **poller**, not the job — so a job cannot forge its
 own success.
 
-### 4.3 Trigger
+### 4.3 Timeout — derived, not guessed (resolved, §8-6)
+
+`RuntimeMaxSec` is not a constant. The effective timeout is:
+
+```
+RuntimeMaxSec = min(registry.timeout_cap, ceil(L1_projected_wall_s × safety))
+```
+
+where `L1_projected_wall_s` is Slicer's capacity-probe projection (measure-
+before-scale) and `safety` is a declared margin (e.g. 1.5). The registry cap is
+a hard ceiling the request can never exceed; the probe supplies the real number
+so a legitimate full-corpus job is not killed by a guessed `6h`, and a wedged
+job still dies at the cap. This ties admission to measurement instead of a
+constant.
+
+### 4.4 Trigger
 
 A `systemd` timer, 60s, polling the queue ref.
 
@@ -250,6 +283,16 @@ dropped) — the specific unreliability that motivated this whole redesign.
 Polling is O(1) network per minute and the failure mode is bounded staleness,
 which is observable. The 60s timer already runs on this box and has been
 reliable across a reboot and a resize.
+
+### 4.5 Poller liveness (so idle ≠ dead)
+
+The poller writes its own heartbeat + failure modes to `refs/heads/jobs/runner`
+(monotonic seq, timestamp, current job or `null`). A reader that sees a stale
+`jobs/runner` knows the **poller** is down; one that sees a fresh `jobs/runner`
+with `current_job: null` knows the box is **idle**. Poller-side fetch/API/ref
+failures are published as `FETCH-FAIL` / `API-BLIND` / `REF-GONE` rather than
+read as "no work" (§1.1 item 6). δ is the external watcher of this ref from
+cloud, with no dependency on the box (§8-5).
 
 ---
 
@@ -267,7 +310,7 @@ Stated as things that **cannot be expressed**, not things we intend to avoid:
 | A6 | A job cannot be orphaned by its dispatcher | transient unit, independent lifetime |
 | A7 | A job cannot fail silently | poller publishes terminal state; unit exit is authoritative |
 | A8 | A stalled job is distinguishable from a running one | monotonic heartbeat + timestamp |
-| A9 | An unreachable observer is distinguishable from an idle one | poller emits its own failure modes (`API-BLIND`, `REF-GONE`, `FETCH-FAIL`) |
+| A9 | An unreachable observer is distinguishable from an idle one | poller emits its own failure modes (`API-BLIND`, `REF-GONE`, `FETCH-FAIL`) to `jobs/runner` |
 | A10 | Status cannot be forged by the job | poller writes status; job has no git credential |
 
 A9 exists because it was violated five times in three days, each time by a
@@ -275,13 +318,35 @@ different mechanism, and each time absence-of-signal was read as absence-of-even
 
 ---
 
-## 6. Deliberate non-goals
+## 6. Acceptance criteria
+
+Verifiable as file + check + pass/fail (cdd style), one per invariant cluster.
+Each must be demonstrated before cutover (§8, migration step 3).
+
+| # | covers | setup | check | pass iff |
+|---|--------|-------|-------|----------|
+| **AC1** | A1, A2 | queue a request with `job: /bin/sh` (or an unknown `job`) | `jobs/status/<id>` state | `rejected` with reason; **no** `cmpjob-<id>` unit was ever created |
+| **AC2** | A3 | queue `slicer` with `n` at the registry max, induce over-budget alloc | `systemctl show cmpjob-<id>` + journal | `MemoryMax`/`CPUQuota`/`RuntimeMaxSec` set from registry; OOM is `CONSTRAINT_MEMCG`; poller pid alive |
+| **AC3** | A4 | inspect a running job's identity | `id`, `sudo -n true`, `~/.ssh`, git push from the job | uid=`cmpjob`; sudo denied; no key; git write denied — all four |
+| **AC4** | A5 | re-queue an `id` that already has a terminal status | `jobs/status/<id>` + unit list | `rejected` (already terminal); no second unit; exec-ledger shows 0 recompute |
+| **AC5** | A6 | kill the poller mid-job | `systemctl show cmpjob-<id>`; restart poller | unit still `active`; job completes; poller reconciles terminal status from unit exit |
+| **AC6** | A7, A10 | run a job that exits nonzero | who wrote the terminal status | terminal `failed` published **by the poller** with the unit's exit code; the job held no git credential |
+| **AC7** | A8 | `SIGSTOP` a running job for > 2× heartbeat interval | heartbeat seq in `jobs/status/<id>` | seq stops advancing; a consumer flags `stalled` within 2× interval |
+| **AC8** | A9 | stop the poller | `jobs/runner` ref | goes stale / last entry is a `FETCH-FAIL`-class marker; reader distinguishes **dead poller** from **idle box** within 2× interval |
+| **AC9** | §4.1 peak, §4.3 timeout | run `slicer` to completion | terminal status | records `memory.peak` of `cmpjob-<id>` (per-job high-water) and the derived `RuntimeMaxSec = min(cap, probe×safety)` |
+
+---
+
+## 7. Deliberate non-goals
 
 Excluded to keep this from becoming a workflow engine (the L7 over-abstraction
 failure). Each may be added later **only when a concrete need exists**:
 
 - **No retries.** A failed job publishes cause and stops. Retrying an unknown
-  failure wastes a 2-hour encode; deciding requires judgement.
+  failure wastes a 2-hour encode and can re-trigger the same OOM; re-dispatch is
+  a fresh judgement call by δ/ω, not automatic. (δ's parallel draft proposed
+  bounded auto-retry; on review that was wrong for this failure profile and is
+  dropped.)
 - **No dependency graph / DAG.** Slicer sequences its own stages.
 - **No dynamic job registration.** Adding a job is a deliberate box-side edit.
 - **No log shipping.** journald on the box; status carries a tail on terminal.
@@ -293,16 +358,17 @@ failure). Each may be added later **only when a concrete need exists**:
 
 ---
 
-## 7. Migration
+## 8. Migration
 
 Slicer's internals are untouched. Only its invocation changes.
 
 1. **Build the admission layer alongside** the existing workflow. No cutover.
 2. **Register `slicer`** in the box registry, pointing at the entrypoint Slicer's
    issue already defines.
-3. **Dispatch one job both ways** — via the existing workflow and via the queue
-   ref — and compare receipts. Equivalence is the gate.
-4. **Switch `sigma/cloud` to dispatch via the queue ref.**
+3. **Prove AC1–AC9**, then **dispatch one job both ways** — via the existing
+   workflow and via the queue ref — and compare receipts. Equivalence is the gate.
+4. **Switch `sigma/cloud` to dispatch via the queue ref** (over the scoped deploy
+   key).
 5. **Unregister the self-hosted runner from `cmp`.** This is the step that
    actually deletes the class; until it happens, the inbound channel still exists.
 6. **Retire `slicer-status/**`** in favour of `jobs/status/<id>` — one convention,
@@ -312,28 +378,36 @@ Rollback at any point before 5 is re-enabling the workflow trigger.
 
 ---
 
-## 8. Open questions — for review, not assumed
+## 9. Resolved decisions and remaining open questions
 
-1. **Who may write `jobs/queue`?** Today `sigma/cloud` uses the same token as
-   everything else. A dedicated deploy key scoped to that ref would make "who can
-   make the box compute" independently answerable. Worth it, or premature?
-2. **Does the box verify commit signatures on the queue ref?** Strongest form of
-   A2's spirit, but adds key management for a single dispatcher.
-3. **Is `jobs/queue` in `cmp`, or its own repo?** In `cmp` is cohesive today;
-   its own repo if Pi or others later dispatch. Recommend `cmp` now, extract when
-   a second dispatcher appears.
-4. **Where does this code live?** `cmp` today (single consumer). If a second
-   consumer appears it should be extracted — that is the trigger, not a guess.
-5. **Does ω own the poller, or is it unowned infrastructure?** It needs no
-   judgement, so it should be unowned. But someone must notice when *it* breaks,
-   and that is ω's watcher — which must therefore not depend on it.
-6. **Timeout policy per job class.** `RuntimeMaxSec=6h` is a guess; a full-corpus
-   encode may legitimately exceed it. Slicer's capacity probe (L1) could supply
-   the number instead of a constant.
+**Resolved (folded into the design above):**
+
+1. **Who may write `jobs/queue`** → a dedicated deploy key scoped to that ref
+   (§3.1), so "who can make the box compute" is independently answerable.
+5. **Poller ownership / watcher** → the poller is unowned infrastructure; **δ is
+   its external watcher** from cloud via `jobs/runner` + `jobs/status/*`, with no
+   dependency on the box, so the watcher cannot share the poller's failure domain
+   (§4.5).
+6. **Timeout per job class** → derived from Slicer's L1 capacity probe under a
+   registry hard cap (§4.3), not a constant.
+- **Per-stage memory peak** → the transient-unit cgroup provides it (§4.1),
+   closing the gap Slicer Sub A deferred to Sub B.
+
+**Still open — for Pi/Axiom, not assumed:**
+
+2. **Commit-signature verification on the queue ref.** sha-pin + box-local
+   registry already carry most of A2's spirit; recommendation: signing is a
+   fast-follow, brought forward **only if** the queue-ref deploy key is ever
+   shared across dispatchers. Decide the trigger.
+3. **Is `jobs/queue` in `cmp` or its own repo?** Recommend `cmp` now (single
+   dispatcher, cohesive); extract when a second dispatcher appears — that is the
+   trigger, not a guess.
+4. **Where does the poller code live?** `cmp` today (single consumer); extract on
+   a second consumer.
 
 ---
 
-## 9. What this costs
+## 10. What this costs
 
 Roughly: a poller (~150 lines), a registry schema, a status writer, a systemd
 timer, and one new user. No new services, no broker, no daemon, no database.
