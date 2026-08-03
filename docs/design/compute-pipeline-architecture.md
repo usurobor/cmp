@@ -40,7 +40,15 @@ The day's incidents (collector OOM ×2, gen_candidate_pairs throttle, embed swap
   — a monitor whose failure is indistinguishable from quiet success manufactures
   false confidence and is worse than none; every watcher emits a distinct signal
   on its own failure modes (blind / gone / unreachable), never a silent skip.
-- **L4 — Memory bounded by construction.** Peak RSS = f(shard), never f(corpus).
+- **L4 — Memory bounded by a declared workload model and enforced budget.**
+  Shardable stages (filter, embed) must have working memory bounded by shard/batch
+  size. Global structures (e.g. the ANN index) may scale with the frozen corpus N,
+  but their complete memory function must be **statically calculated or empirically
+  bounded before admission**, and no stage may accumulate undeclared/unbounded
+  per-record state. Formally `peakMem(stage) ≤ B_stage(N, shard, config) ≤ enforced
+  budget`. (The old "= f(shard), never f(corpus)" was false for the in-memory
+  ANN index, which is necessarily f(N); the invariant is *no surprise
+  accumulation*, not corpus-independence.)
 - **L5 — Errors surface.** Explicit `Result`; no `2>/dev/null` that blinds for 5 h.
 - **L6 — Failure is cheap.** Degrade / skip / checkpoint, never collapse.
 
@@ -232,7 +240,7 @@ lightest composition that closes every failure class we actually hit.
 
 | Incident | Design element that prevents recurrence |
 |---|---|
-| OOM / swap (3× today) | out-of-core stages + shard budget + capacity probe → peak RSS = f(shard), never f(corpus) |
+| OOM / swap (3× today) | declared per-stage memory bound + enforced budget + capacity probe (shardable stages bounded by shard; global structures bounded before admission) |
 | Couldn't tail progress | run-state JSON mirrored to a git ref, queryable anytime |
 | Couldn't interrupt/resume | shard-level checkpoints + idempotent skip → kill/restart resumes |
 | Ran huge job hoping | sample-mode tracer + probe gate + staged scale-up; full run refused if projection > budget |
