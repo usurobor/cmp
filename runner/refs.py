@@ -30,12 +30,18 @@ def validate_request(raw, expect_id):
     Returns the parsed request. Raises RequestError. (§3.2/§3.6)"""
     if not ID_RE.match(expect_id):
         raise RequestError("id grammar violation: %r" % expect_id)
+    if len(raw) > 65536:
+        raise RequestError("request too large: %d bytes" % len(raw))
     try:
         req = json.loads(raw.decode("utf-8"))
     except Exception as e:
         raise RequestError("not UTF-8 JSON: %s" % e)
+    if not isinstance(req, dict):                       # a signed array/scalar is a bounded reject
+        raise RequestError("request root must be a JSON object, got %s" % type(req).__name__)
     if req.get("schema") != "cmp.job-request.v1":
         raise RequestError("bad schema: %r" % req.get("schema"))
+    if "params" in req and not isinstance(req["params"], dict):
+        raise RequestError("params must be a mapping, got %s" % type(req["params"]).__name__)
     if req.get("id") != expect_id:
         raise RequestError("id mismatch: body %r != path %r" % (req.get("id"), expect_id))
     if not ID_RE.match(str(req.get("id", ""))):
@@ -228,14 +234,22 @@ class StatusTamper(Exception):
     pass
 
 
+STATUS_SCHEMAS = {"cmp.job-status.v1", "cmp.queue-event.v1"}
+_TERMINAL_STATES = {"succeeded", "failed", "rejected", "timeout", "indeterminate"}
+
+
 def read_status(gitdir, ref, box_signers, pin):
-    """Anti-rollback reader (§3.6 A16). pin={commit,event_id}. Verifies box sig,
-    descendant of pinned commit, strictly increasing global event_id.
-    Returns (events, new_pin) or raises StatusTamper."""
+    """Anti-rollback reader enforcing the FULL frozen wire contract (§3.6 A16, Pi #7):
+    box signature; descendant of the pinned commit; each commit single-parent and
+    append-only; exactly `A events/<event_id>.json`; filename==payload event_id;
+    known schema; strictly increasing global event_id; per-job monotonic seq;
+    terminal finality. pin={commit,event_id}. Raises StatusTamper."""
     tip = ref_sha(gitdir, ref)
     if tip is None:
         return [], pin
     if pin.get("commit"):
+        if pin["commit"] == tip:
+            return [], pin                      # unchanged reread
         if not is_ancestor(gitdir, pin["commit"], tip):
             raise StatusTamper("STATUS-TAMPER: status ref does not descend from pinned commit")
         shas = git(gitdir, "rev-list", "--first-parent", "--reverse",
@@ -243,18 +257,83 @@ def read_status(gitdir, ref, box_signers, pin):
     else:
         shas = git(gitdir, "rev-list", "--first-parent", "--reverse", tip).stdout.decode().split()
     events, last_eid = [], pin.get("event_id", 0)
+    seen_seq, terminated = pin.get("jobseq", {}), set(pin.get("terminated", []))
+    seen_seq = dict(seen_seq)
     for sha in shas:
-        verify_commit(gitdir, sha, box_signers)  # box-key or not trusted
+        if len(parents(gitdir, sha)) > 1:
+            raise StatusTamper("STATUS-TAMPER: non-linear status commit %s" % sha)
+        verify_commit(gitdir, sha, box_signers)  # box-key or not trusted (AC12)
         adds = added_paths(gitdir, sha)
-        if len(adds) != 1 or not adds[0][1].startswith("events/"):
-            raise StatusTamper("STATUS-TAMPER: malformed status commit")
+        if len(adds) != 1 or adds[0][0] != "A" or not adds[0][1].startswith("events/") \
+                or not adds[0][1].endswith(".json"):
+            raise StatusTamper("STATUS-TAMPER: commit must add exactly one events/<id>.json")
+        eid_name = adds[0][1][len("events/"):-len(".json")]
         ev = json.loads(read_blob(gitdir, sha, adds[0][1]))
+        if str(ev.get("event_id")) != eid_name:
+            raise StatusTamper("STATUS-TAMPER: filename %s != payload event_id %s" % (eid_name, ev.get("event_id")))
+        if ev.get("schema") not in STATUS_SCHEMAS:
+            raise StatusTamper("STATUS-TAMPER: unknown schema %r" % ev.get("schema"))
         eid = int(ev["event_id"])
         if eid <= last_eid:
             raise StatusTamper("STATUS-TAMPER: event_id %d regressed/reused (<= %d)" % (eid, last_eid))
         last_eid = eid
+        if ev["schema"] == "cmp.job-status.v1":
+            jid = ev["job_id"]
+            if jid in terminated:
+                raise StatusTamper("STATUS-TAMPER: event after terminal for job %s" % jid)
+            s = int(ev.get("seq", 0))
+            if s <= seen_seq.get(jid, 0):
+                raise StatusTamper("STATUS-TAMPER: per-job seq %d regressed for %s" % (s, jid))
+            seen_seq[jid] = s
+            if ev.get("state") in _TERMINAL_STATES:
+                terminated.add(jid)
         events.append(ev)
-    return events, {"commit": tip, "event_id": last_eid}
+    return events, {"commit": tip, "event_id": last_eid,
+                    "jobseq": seen_seq, "terminated": sorted(terminated)}
+
+
+# ---- remote transport (§4.4 / Pi #5) -------------------------------------
+def fetch_queue(gitdir, remote, qref):
+    """Fetch jobs/queue from origin into the local bare mirror. A remote that simply
+    has no queue ref yet is 'empty', not a failure; anything else (unreachable remote,
+    transport error) raises and the caller maps it to FETCH-FAIL health."""
+    r = git(gitdir, "fetch", remote, "+%s:%s" % (qref, qref), check=False)
+    if r.returncode != 0:
+        if b"couldn't find remote ref" in r.stderr or b"couldn't find remote ref" in r.stdout:
+            return
+        raise RuntimeError("FETCH-FAIL: %s" % r.stderr.decode()[:200])
+
+
+def push_ref(gitdir, remote, ref, force=False):
+    """Append-only push (status) / force push (runner). Raises on failure."""
+    spec = ("+" if force else "") + "%s:%s" % (ref, ref)
+    r = git(gitdir, "push", remote, spec, check=False)
+    if r.returncode != 0:
+        raise RuntimeError("PUSH-FAIL: %s" % r.stderr.decode()[:200])
+
+
+def status_has_event(gitdir, ref, eid6):
+    tip = ref_sha(gitdir, ref)
+    if tip is None:
+        return False
+    return git(gitdir, "cat-file", "-e", "%s:events/%s.json" % (tip, eid6), check=False).returncode == 0
+
+
+def publish_event(gitdir, ref, eid, payload, boxkey):
+    """Idempotently append one box-signed event. Safely repeatable from the same
+    event_id+bytes (Pi #6): if events/<eid>.json is already at the tip, this is a
+    no-op that the caller then acks."""
+    eid6 = "%06d" % int(eid)
+    if status_has_event(gitdir, ref, eid6):
+        return ref_sha(gitdir, ref)
+    tip = ref_sha(gitdir, ref)
+    base = git(gitdir, "rev-parse", tip + "^{tree}").stdout.decode().strip() if tip else None
+    data = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    tree = build_tree(gitdir, base, "events/%s.json" % eid6, data)
+    ident = "cmp-box <box@cmp> %d +0000" % 1785000000
+    sha = make_commit(gitdir, tree, [tip] if tip else [], ident, "status %s" % eid6, boxkey)
+    git(gitdir, "update-ref", ref, sha)
+    return sha
 
 
 # ---- runner ref (mutable snapshot, box-signed, §4.5) ---------------------
@@ -272,20 +351,23 @@ class RunnerReplay(Exception):
 
 
 def read_runner(gitdir, ref, box_signers, pin):
-    """Anti-rollback (§4.5 A16). pin={seq,observed_at}. Lower/equal seq => RUNNER-REPLAY;
-    regressed observed_at => stale (health downgraded, never 'healthy')."""
+    """Anti-rollback (§4.5 A16, Pi #7). pin={seq,observed_at,commit}. Resolve the
+    ACTUAL tip: an unchanged reread (same commit object) is NOT a replay; a DIFFERENT
+    object with seq <= pinned seq IS `RUNNER-REPLAY`; a regressed observed_at is stale
+    (health downgraded, never 'healthy')."""
     tip = ref_sha(gitdir, ref)
     if tip is None:
         return None, pin
     verify_commit(gitdir, ref, box_signers)  # box-signed or reject
     snap = json.loads(read_blob(gitdir, tip, "runner.json"))
     seq = int(snap["seq"])
+    if tip == pin.get("commit"):
+        return snap, pin                      # unchanged reread of the same object
     if seq <= pin.get("seq", -1):
-        raise RunnerReplay("RUNNER-REPLAY: seq %d <= pinned %d" % (seq, pin.get("seq", -1)))
-    stale = snap.get("observed_at", 0) < pin.get("observed_at", 0)
-    if stale:
+        raise RunnerReplay("RUNNER-REPLAY: different object seq %d <= pinned %d" % (seq, pin.get("seq", -1)))
+    if snap.get("observed_at", 0) < pin.get("observed_at", 0):
         snap["health"] = "STALE"
-    return snap, {"seq": seq, "observed_at": snap.get("observed_at", 0)}
+    return snap, {"seq": seq, "observed_at": snap.get("observed_at", 0), "commit": tip}
 
 
 # ---- CI-inert runtime check (A11 / AC10) ---------------------------------

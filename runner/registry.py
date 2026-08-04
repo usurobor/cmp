@@ -59,6 +59,8 @@ def validate_params(spec, params):
     (Workload projection/refusal stays inside Slicer per §4.3 — this only guards
     the declared shape.)"""
     decl = spec.get("params", {})
+    if params and not isinstance(params, dict):
+        raise RegistryError("params must be a mapping")
     for k, v in (params or {}).items():
         if k not in decl:
             raise RegistryError("unknown param %r" % k)
