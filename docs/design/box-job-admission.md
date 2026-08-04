@@ -1,9 +1,19 @@
 # Box job admission — design
 
-**Status:** `v0.5.0` — **design only, nothing built.** Architecture converged with
-Pi; this version closes Pi's four final gaps on v0.4.0 (transport boundary,
-launch atomicity, projection circularity, wire holes). Intended to be
-implementation-dispatchable.
+**Status:** `v0.5.1` — **design only, nothing built.** Pi granted
+**CONDITIONAL_APPROVAL** of v0.5.0 (architecture + transport converged) with four
+mechanical errata; this version applies them exactly. Per Pi, once these exact
+corrections are committed the **implementation cell is pre-authorized to dispatch
+without another design review**.
+**v0.5.1 errata:** (1) removed the stale "App actor" — status carries the
+**verified signing principal + fingerprint**, and v0 key trust anchors/lifecycle
+are frozen (§3.2); (2) **anti-rollback** for the box-signed status & runner refs —
+`STATUS-TAMPER`/`RUNNER-REPLAY` (§3.6, §4.5, A16, AC16); (3) the **root launcher
+independently verifies signed-queue provenance** via `cmp-launch <key> <queue-sha>
+<id>` reading from a fixed bare mirror, trusting no poller path/bytes/signature-
+decision (§4.2, AC14); (4) **`indeterminate`/`launch_outcome_unknown`** added as a
+truthful terminal state to the lifecycle, schema, ledger table, and AC (§3.4/§3.5/
+§3.6, AC17).
 **Design:** ω (Omega). **Converged:** δ (cn-sigma@cmp:claude/chat).
 **Operator decision folded in:** transport trust = **git-native signed objects**
 (option B), not a GitHub org + rulesets — the box verifies signatures, aligned
@@ -132,9 +142,19 @@ params: { mode: sample, n: 60000 }
   form before accepting.
 - **`job` selects a registry key**, never a command/path/argv.
 - **Binding** (with §3.6): the status entry carries the queue commit SHA, the
-  canonical request digest, registry job id+version, and the authenticated App
-  actor. A duplicate `id` with a **differing** request digest is an integrity
-  violation → rejected (AC11), distinct from a benign replay (§3.5).
+  exact-byte request digest, registry job id+version, and the **verified signing
+  principal + key fingerprint** — derived from signature verification, **never**
+  from request text or git author metadata. A duplicate `id` with a **differing**
+  request digest is an integrity violation → rejected (AC11), distinct from a
+  benign replay (§3.5).
+- **Trust anchors + key lifecycle (frozen for v0).** Two separate anchors, both
+  root-owned and box-local: (a) **queue trust** = the dispatcher principal/key
+  verified against `allowed_signers`; (b) **status/runner trust** = the box signing
+  key, verified by external readers (δ) against a **separately pinned public
+  key/fingerprint** — never material learned from the status/runner ref itself. No
+  transparent key rotation: a key change is an explicit maintenance event that
+  updates the relevant pinned trust material **before** any new object signed by
+  the new key is accepted.
 
 ### 3.3 Registry — box-local, binds provenance + sandbox
 
@@ -183,13 +203,21 @@ Content addressing is only reproducible if the bytes are frozen:
   commit appends exactly one `events/<event_id>.json`; `event_id` is a
   left-zero-padded global monotonic counter (`000001`, `000002`, …). The reader's
   cursor is first-parent linear traversal, same law as the queue.
+- **Anti-rollback (Pi erratum, A16).** A valid box signature also authenticates an
+  *old* object, so signature validity is not freshness. Status readers pin
+  `last_accepted_status_commit` **and** the last global `event_id`; a non-descendant
+  ref, or a regressing/reused non-idempotent `event_id`, is `STATUS-TAMPER` and
+  halts acceptance (falsifiable, not silent).
 - **Two event kinds.**
   - **Job event** `cmp.job-status.v1`: `{ event_id, job_id, seq (per-job monotonic),
-    state ∈ {queued,admitted,running,succeeded,failed,rejected,timeout}, reason?,
-    request_digest, queue_commit, unit, actor, observed_at }`. Terminal
-    (`succeeded|failed|rejected|timeout`) is **final**; any later non-idempotent
-    event for that `job_id` is invalid. `timeout_capacity_refused` is **not** a
-    state — it is `state: rejected, reason: timeout_capacity_refused`.
+    state ∈ {queued,admitted,running,succeeded,failed,rejected,timeout,indeterminate},
+    reason?, request_digest, queue_commit, unit, principal, fingerprint,
+    observed_at }`. Terminal (`succeeded|failed|rejected|timeout|indeterminate`) is
+    **final**; any later non-idempotent event for that `job_id` is invalid.
+    `timeout_capacity_refused` is **not** a state — it is `state: rejected, reason:
+    timeout_capacity_refused`. **`indeterminate`** (reason `launch_outcome_unknown`)
+    is the truthful terminal for a launch whose outcome cannot be established
+    (§3.5) — never encoded as `failed`/`rejected`; final, never auto-relaunched.
   - **Queue-system event** `cmp.queue-event.v1`, for failures with **no valid job
     id/digest** (a malformed/multi-add/mutating commit, `QUEUE-NONLINEAR`,
     `QUEUE-UNSIGNED`, `QUEUE-TAMPER`, `LEDGER-INCONSISTENT`):
@@ -200,7 +228,7 @@ Content addressing is only reproducible if the bytes are frozen:
 ### 3.4 Lifecycle — three distinct signals (Pi #6, prior)
 
 ```
-queued → admitted → running ⇄ progress → { succeeded | failed | rejected | timeout }
+queued → admitted → running ⇄ progress → { succeeded | failed | rejected | timeout | indeterminate }
 ```
 - **poller liveness** = `jobs/runner` snapshot (§4.5).
 - **job progress** = an **untrusted** record the job emits via a local file/socket,
@@ -229,13 +257,18 @@ making "crashed before start" and "ran once and disappeared" observably identica
 restart, before any launch):
   - INTENT present, unit **active** → adopt, do **not** relaunch.
   - terminal already in ledger → replay rejected.
-  - INTENT present, **no unit, no terminal** → **`launch_outcome_unknown`**;
+  - INTENT present, **no unit, no terminal** (incl. fast-exit-then-collected) →
+    publish terminal **`state: indeterminate, reason: launch_outcome_unknown`**;
     **never auto-relaunch**. Recovery is a *new* request (new `id`) or manual
     reconciliation. **Slicer's own durable resume carries recovery** — a
     resubmitted job resumes its checkpoint and recomputes nothing, so at-most-once
     at this layer + idempotent resume at Slicer = no duplicated work and no lost
     work.
   - anything else → halt `LEDGER-INCONSISTENT`.
+
+The ledger transition table admits exactly: `INTENT → {active-adopt, terminal,
+indeterminate}` and `terminal → replay-rejected`. `indeterminate` is a terminal
+ledger state for that request digest.
 
 Exactly-once (never `launch_outcome_unknown`) is a later upgrade: drop `--collect`
 and retain the unit until the terminal is durably written, so "no unit" truly
@@ -267,23 +300,33 @@ deferred to Sub B — supplied *once this layer is built and proven*, §9).
 ### 4.2 Identity + hardened root launcher (Pi #4)
 
 - **Jobs run as `cmpjob`** — no sudo/keys/git credential; never `sigma`.
-- **Unprivileged poller** parses attacker-controlled queue bytes; a **minimal
-  root-owned launcher** performs the privileged start. The launcher **does not
-  trust the poller's file**: it independently
-  1. re-resolves the **registry key + version** and reloads registry policy,
-  2. re-verifies **`exec_sha256`** against the on-disk executable,
-  3. re-hashes the **exact request bytes** it was handed and checks them against
-     the admitted **`request_digest`**, then re-validates against
-     `cmp.job-request.v1` (no separate canonical param digest exists),
-  4. accepts the request object only as a **protected spool object or an already-open file
-     descriptor** (fd-passed), **never a caller-chosen path**; rejects symlinks,
-     path traversal, and post-open replacement (**O_NOFOLLOW**, `fstat` ino/mode/uid
-     checks, compare fd identity, TOCTOU-safe),
-  5. requires the spool object be **root-owned, mode 0400**, on a non-world-writable
-     dir.
-- **Invocation authority is narrow and explicit:** a single systemd/Polkit action
-  or one exact `sudoers` entry permitting only `cmp-launch <registry-key> <fd>` —
-  not arbitrary argv, with a scrubbed environment (only registry-declared vars).
+- **Unprivileged poller** parses attacker-controlled queue bytes and schedules;
+  a **minimal root-owned launcher** performs the privileged start and **independently
+  re-establishes signed-queue provenance** — it does not trust the poller's
+  signature decision, path, or supplied bytes (Pi #3). The launcher is invoked
+  only as:
+  ```
+  cmp-launch <registry-key> <queue-commit-sha> <request-id>
+  ```
+  and then, from a **fixed root-owned bare mirror** of the repo (no poller-selected
+  path):
+  1. reads `requests/<id>.json` **by commit/blob identity** at `<queue-commit-sha>`,
+  2. **verifies the queue commit's signature** against the root-owned
+     `allowed_signers` (a parser-compromised poller cannot forge this),
+  3. computes the exact-byte `request_digest` and validates against
+     `cmp.job-request.v1`, checks `id` grammar and that the commit adds exactly this
+     one request (§3.6),
+  4. re-resolves **registry key+version**, reloads policy, re-verifies
+     **`exec_sha256`**,
+  5. launches under the systemd template (§4.1).
+  It accepts **no poller-selected filesystem path and no separately-supplied
+  request bytes/digest** — rehashing bytes handed over by the same compromised
+  poller is not an authorization check. (The earlier "poller supplies a root-owned
+  0400 spool object" is removed as internally inconsistent.)
+- **Invocation authority is narrow and explicit:** one systemd/Polkit action or one
+  exact `sudoers` entry permitting only `cmp-launch <registry-key> <queue-commit-sha>
+  <request-id>` — not arbitrary argv, scrubbed environment (only registry-declared
+  vars).
 - Status is written by the poller, never the job (A10).
 
 ### 4.3 Timeout — the box enforces only the registry ceiling (Pi #5)
@@ -314,6 +357,10 @@ retained per-minute history**. Each snapshot commit is **box-key-signed**, and t
 ref stays **CI-inert** (AC10). `jobs/queue` and `jobs/status` remain append-only;
 only this telemetry ref is mutable. Poller fetch/API/ref failures set `health` to
 `FETCH-FAIL`/`API-BLIND`/`REF-GONE` rather than reading as "no work."
+**Anti-rollback (A16):** because force-update is allowed here and a signature
+authenticates an old snapshot, runner readers pin the highest accepted `seq`; a
+signed snapshot with a **lower/equal non-idempotent `seq` is `RUNNER-REPLAY`**, and
+a regressed `observed_at` is **stale, never healthy**.
 
 ---
 
@@ -336,6 +383,7 @@ only this telemetry ref is mutable. Poller fetch/API/ref failures set `health` t
 | A13 | no unsigned/unauthorized request is admitted, no forged status is trusted | signature check vs box-local `allowed_signers`; box-key-signed status (§3.1) |
 | A14 | request identity is reproducible | frozen wire bytes + exact-byte digest + linear cursor (§3.6) |
 | A15 | queue tamper/rewrite cannot pass unnoticed | pinned `last_accepted_commit`; non-descendant ⇒ `QUEUE-TAMPER` (§3.1) |
+| A16 | a validly-signed *old* status/runner object cannot replay as fresh | pinned status commit+`event_id` (`STATUS-TAMPER`); pinned runner `seq` (`RUNNER-REPLAY`) |
 
 ---
 
@@ -345,7 +393,7 @@ only this telemetry ref is mutable. Poller fetch/API/ref failures set `health` t
 |---|---|---|
 | AC1 | A1,A2 | `job:/bin/sh`, unknown `job`, or a colon/oversized id → `rejected`; no unit created |
 | AC2 | A3 | limits set from registry; induced OOM is `CONSTRAINT_MEMCG`; poller alive |
-| AC3 | A4,A12 | uid=`cmpjob`; sudo denied; no key; git-write denied; launcher got only key+fd |
+| AC3 | A4,A12 | uid=`cmpjob`; sudo denied; no key; git-write denied; launcher invoked only as `cmp-launch <key> <queue-sha> <id>` |
 | AC4 | A5 | faults injected **before** start, **after start (active)**, and **fast-exit-then-collected**: reconciliation relaunches none; `launch_outcome_unknown` on the ambiguous case; 0 recompute on Slicer resubmit; replay rejected |
 | AC5 | A6 | kill poller mid-job → unit stays `active`; poller reconciles terminal from unit exit |
 | AC6 | A7,A10 | job exits nonzero and *tries* to self-publish success → poller publishes `failed`; self-success ignored |
@@ -356,8 +404,10 @@ only this telemetry ref is mutable. Poller fetch/API/ref failures set `health` t
 | AC11 | A2 | duplicate `id`, different request digest → `rejected` (integrity), not replay |
 | AC12 | A13 | a queue commit that is unsigned or signed by a non-`allowed_signers` key → `QUEUE-UNSIGNED`, never admitted; a `jobs/status` commit not signed by the box key → not trusted by δ's verifier |
 | AC13 | A14 | two independent processes derive the same `request_digest` and cursor position from `jobs/queue`; a merge/multi-add/mutating commit is rejected `QUEUE-NONLINEAR`/malformed |
-| AC14 | A12 | launcher rejects a symlinked/replaced/world-writable request object and a path-not-fd invocation (TOCTOU) |
+| AC14 | A12 | **compromised-poller simulation:** a schema-valid request whose queue commit is *unsigned or wrong-key* cannot be launched — the launcher's independent commit-signature check rejects it |
 | AC15 | A15 | force-push/rewrite that drops `last_accepted_commit` from queue history → admission halts `QUEUE-TAMPER` (falsifiable), not silent |
+| AC16 | A16 | replay of an earlier **genuinely box-signed** status commit / runner snapshot is detected (`STATUS-TAMPER`/`RUNNER-REPLAY`), not accepted on signature validity alone |
+| AC17 | §3.5 | the `indeterminate`/`launch_outcome_unknown` terminal is emitted on the fast-exit-then-collected case and is never auto-relaunched |
 
 ---
 
