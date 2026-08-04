@@ -1,24 +1,31 @@
 # Box job admission — design
 
-**Status:** `v0.4.0` — **design only, nothing built.** Architecture converged with
-Pi; this version closes the seven remaining executable-contract corrections Pi
-raised on v0.3.0 so the design is implementation-dispatchable without another
-architectural pass.
+**Status:** `v0.5.0` — **design only, nothing built.** Architecture converged with
+Pi; this version closes Pi's four final gaps on v0.4.0 (transport boundary,
+launch atomicity, projection circularity, wire holes). Intended to be
+implementation-dispatchable.
 **Design:** ω (Omega). **Converged:** δ (cn-sigma@cmp:claude/chat).
+**Operator decision folded in:** transport trust = **git-native signed objects**
+(option B), not a GitHub org + rulesets — the box verifies signatures, aligned
+with cnos's git-native model.
 **Applies:** cnos.eng `evolve`, `code`, `process-economics`, core `design`,
 `performance-reliability`, L7.
 
-**v0.4.0 changelog (Pi's 7):** writer identity + ref-protection for **all three**
-operational refs, not just the queue (§3.1); `jobs/runner` is a **mutable
-single-writer snapshot**, not a 525k-commits/year append log (§3.1, §4.5); frozen
-**wire format, canonicalization, cursor law, and status-event schema** (§3.6); a
-**single** job-id grammar with a bounded length (§3.2); a **hardened root
-launcher** — independent re-resolution, digest/schema re-validation, TOCTOU/
-symlink defenses, fd/spool-only input, explicit invocation authority,
-`WorkingDirectory` (§4.2); timeout that **refuses over-cap projections** and a
-defined, bound projection source (§4.3); an **atomic exactly-once ledger
-contract** with reconciliation on both sides of the launch boundary (§3.5); and
-acceptance criteria that prove the new trust claims (§6).
+**v0.5.0 changelog (Pi's final 4):** transport is **signed git objects verified
+against a box-local `allowed_signers`**, since `cmp` is a User repo where org
+rulesets don't exist; ref write-access is *not* relied upon — unsigned/unknown-key
+commits are never admitted (§3.1). Launch guarantee is honest **at-most-once**:
+an ambiguous outcome is never auto-relaunched, and Slicer's durable resume carries
+recovery (§3.5). Workload **projection/refusal stays inside Slicer**; the box
+enforces only the root-owned registry ceiling — removing the circular
+probe-receipt binding (§4.3). Wire holes closed: one exact-byte `request_digest`
+(no separate "canonical param digest"); a frozen `jobs/status` physical layout;
+a **queue-system event schema** for failures without a job id; `timeout_capacity_
+refused` demoted to a `rejected` reason (§3.6).
+
+**v0.4.0 changelog (Pi's 7):** all-three-ref writer roles; `jobs/runner` mutable
+snapshot; frozen wire/cursor/status schema; single id grammar; hardened root
+launcher; over-cap timeout; atomic ledger; ACs for the new trust claims.
 
 ---
 
@@ -80,22 +87,30 @@ or the design was wrong.
 
 ## 3. Contract
 
-### 3.1 Three ref classes — writer identity + protection for each (Pi #1)
+### 3.1 Three ref classes — signature-gated, not ACL-gated (Pi #1)
 
-| ref | writer | shape | protection |
+`usurobor/cmp` is owned by a GitHub **User**, not an org, so per-ref actor
+allowlists / bypass rulesets **do not exist** on this host. Transport trust is
+therefore **git-native signed objects**, verified by the box — which fits cnos's
+model (the box already trusts its own local policy, not GitHub's ACLs).
+
+| ref | writer role | shape | trust gate (box-verified) |
 |---|---|---|---|
-| `refs/heads/jobs/queue` | **dispatcher App identity** | append-only, ff-only | ruleset: create+update restricted to the actor; force-push & delete denied |
-| `refs/heads/jobs/status` | **box App identity** | append-only, ff-only, one stream keyed by `id` | ruleset: create+update restricted to the box actor; force & delete denied |
-| `refs/heads/jobs/runner` | **box App identity** | **mutable single-writer snapshot** (see §4.5) | ruleset: update restricted to the box actor; delete denied; force-update *allowed for this ref only* |
+| `refs/heads/jobs/queue` | **dispatcher key** | append-only, ff-only | commit **SSH-signed by a `dispatcher` key in the box-local `allowed_signers`**; else not admitted |
+| `refs/heads/jobs/status` | **box key** | append-only, ff-only, `events/<event_id>.json`, one per commit (§3.6) | commit signed by the **box key**; readers verify; unsigned/other-key ⇒ not trusted |
+| `refs/heads/jobs/runner` | **box key** | **mutable single-writer snapshot** (§4.5) | box-key-signed; force-update allowed for this ref only |
 
-All three are authoritative surfaces, so **all three** get a declared authenticated
-writer and a **repository ruleset** — not just the queue. Rulesets must cover
-**initial creation** as well as updates, deny **force-push and deletion** (except
-`jobs/runner`'s own in-place snapshot update), and admit **no broad bypass actor**.
-GitHub deploy keys are repo-scoped, not ref-scoped, so identity is a **dedicated
-GitHub App installation** per role (dispatcher vs box), enforced by rulesets. An
-acceptance test proves an unauthorized credential can neither create, update,
-force, nor delete any operational ref (AC12).
+- **`allowed_signers` is box-local, root-owned** (same authority as the registry):
+  changing who may dispatch requires **box access**, never a git push.
+- **Ref write-access is NOT the trust boundary.** Anyone with push access can add
+  a commit; the box **admits only commits signed by an allowed `dispatcher` key**
+  (`git verify-commit` / `ssh-keygen -Y verify`). An unsigned or wrong-key commit
+  is rejected `QUEUE-UNSIGNED` — **write-access ≠ admission**.
+- **Tamper / rewrite:** the box pins `last_accepted_commit`; if the queue ref no
+  longer descends from it (force-push/rewrite), admission halts `QUEUE-TAMPER`
+  (falsifiable, not silent). Deletion is blocked by the proxy anyway.
+- AC12 proves an unsigned or wrong-key request commit is never admitted, and a
+  status commit not signed by the box key is never trusted.
 
 **Why git, not a broker; why not the r0 boxes** — unchanged from v0.3.0 (git
 already present; memory must not silently become a command channel, #690).
@@ -161,11 +176,26 @@ Content addressing is only reproducible if the bytes are frozen:
   — hash the admitted bytes verbatim (no re-serialization), and require the file to
   parse as UTF-8 JSON against `cmp.job-request.v1`. (Hashing exact bytes avoids
   canonicalization-algorithm ambiguity entirely.)
-- **Status-event schema** (`cmp.job-status.v1`), one appended line per transition:
-  `{ event_id, job_id, seq (per-job monotonic), state, request_digest,
-  queue_commit, unit (cmpjob-<id>.service), actor, observed_at }`. Terminal states
-  (`succeeded|failed|rejected|timeout`) are **final**; any later event for that
-  `job_id` except an idempotent repeat is invalid.
+- **One digest only.** `request_digest = SHA-256(exact bytes of requests/<id>.json)`
+  is the sole content address; the root launcher verifies **these exact bytes**
+  (§4.2). There is no separate "canonical param digest" — the bytes are the param.
+- **`jobs/status` physical layout (frozen, mirrors the queue).** One box-signed
+  commit appends exactly one `events/<event_id>.json`; `event_id` is a
+  left-zero-padded global monotonic counter (`000001`, `000002`, …). The reader's
+  cursor is first-parent linear traversal, same law as the queue.
+- **Two event kinds.**
+  - **Job event** `cmp.job-status.v1`: `{ event_id, job_id, seq (per-job monotonic),
+    state ∈ {queued,admitted,running,succeeded,failed,rejected,timeout}, reason?,
+    request_digest, queue_commit, unit, actor, observed_at }`. Terminal
+    (`succeeded|failed|rejected|timeout`) is **final**; any later non-idempotent
+    event for that `job_id` is invalid. `timeout_capacity_refused` is **not** a
+    state — it is `state: rejected, reason: timeout_capacity_refused`.
+  - **Queue-system event** `cmp.queue-event.v1`, for failures with **no valid job
+    id/digest** (a malformed/multi-add/mutating commit, `QUEUE-NONLINEAR`,
+    `QUEUE-UNSIGNED`, `QUEUE-TAMPER`, `LEDGER-INCONSISTENT`):
+    `{ event_id, kind, queue_commit|ref_position, detail, observed_at }` with
+    `job_id`/`request_digest` **null**. This is the cursor/error identity for
+    queue-level faults.
 
 ### 3.4 Lifecycle — three distinct signals (Pi #6, prior)
 
@@ -192,16 +222,25 @@ A named ledger, not just components:
   (`open(O_CREAT|O_EXCL)` → `write` → `fsync` → `fsync(dir)`); the create-exclusive
   is the launch lock. The **systemd unit name `cmpjob-<id>`** is the second lock: a
   start against a live/known unit is refused by systemd.
-- **Reconciliation** (on poller restart, before any launch) inspects ledger + unit
-  state and resolves every crash position:
-  - INTENT present, **no unit** → crash *before* start → launch is permitted once.
-  - INTENT present, unit **active** → crash *after* start → adopt, do not relaunch.
-  - INTENT present, unit **exited & collected**, no terminal published → publish the
-    reconciled terminal from the unit's recorded result; never relaunch.
+**Guarantee: at-most-once launch (honest).** Under `systemd-run --collect`, a unit
+that starts and exits quickly can be *collected* before the ledger advances,
+making "crashed before start" and "ran once and disappeared" observably identical
+(INTENT present, no unit). We do **not** guess between them. Reconciliation (on
+restart, before any launch):
+  - INTENT present, unit **active** → adopt, do **not** relaunch.
   - terminal already in ledger → replay rejected.
-- **Admissible transitions** are enumerated; anything else halts with
-  `LEDGER-INCONSISTENT`. AC4 injects a fault **on both sides** of the start call
-  (before-start and after-start-before-publish) — one case is insufficient.
+  - INTENT present, **no unit, no terminal** → **`launch_outcome_unknown`**;
+    **never auto-relaunch**. Recovery is a *new* request (new `id`) or manual
+    reconciliation. **Slicer's own durable resume carries recovery** — a
+    resubmitted job resumes its checkpoint and recomputes nothing, so at-most-once
+    at this layer + idempotent resume at Slicer = no duplicated work and no lost
+    work.
+  - anything else → halt `LEDGER-INCONSISTENT`.
+
+Exactly-once (never `launch_outcome_unknown`) is a later upgrade: drop `--collect`
+and retain the unit until the terminal is durably written, so "no unit" truly
+means "no start." Not needed for v0 given Slicer resume. **AC4 injects the
+fast-exit-and-collected case**, not only active-unit crashes.
 
 ---
 
@@ -213,12 +252,12 @@ A named ledger, not just components:
 systemd-run --unit=cmpjob-<id> --collect --uid=cmpjob
   --property=WorkingDirectory=<registry.workdir>
   --property=MemoryMax=<memory> --property=MemorySwapMax=0
-  --property=CPUQuota=<cpu>      --property=RuntimeMaxSec=<derived §4.3>
+  --property=CPUQuota=<cpu>      --property=RuntimeMaxSec=<registry.timeout_cap §4.3>
   --property=NoNewPrivileges=yes --property=CapabilityBoundingSet=
   --property=ProtectSystem=strict --property=PrivateTmp=yes
   --property=ReadOnlyPaths=<input_roots> --property=ReadWritePaths=<output_roots>
   --property=IPAddressDeny=any             # unless registry network != none
-  -- <registry.exec, sha-verified> @<canonical param file, fd-passed §4.2>
+  -- <registry.exec, sha-verified> @<request object, fd-passed §4.2>
 ```
 cgroup limits (runaway dies in its own cgroup), survives its parent, journald
 capture, `systemctl show` authoritative, and a **true per-job `memory.peak`** the
@@ -233,8 +272,10 @@ deferred to Sub B — supplied *once this layer is built and proven*, §9).
   trust the poller's file**: it independently
   1. re-resolves the **registry key + version** and reloads registry policy,
   2. re-verifies **`exec_sha256`** against the on-disk executable,
-  3. re-validates the **canonical param digest + schema** it was handed,
-  4. accepts params only as a **protected spool object or an already-open file
+  3. re-hashes the **exact request bytes** it was handed and checks them against
+     the admitted **`request_digest`**, then re-validates against
+     `cmp.job-request.v1` (no separate canonical param digest exists),
+  4. accepts the request object only as a **protected spool object or an already-open file
      descriptor** (fd-passed), **never a caller-chosen path**; rejects symlinks,
      path traversal, and post-open replacement (**O_NOFOLLOW**, `fstat` ino/mode/uid
      checks, compare fd identity, TOCTOU-safe),
@@ -245,21 +286,18 @@ deferred to Sub B — supplied *once this layer is built and proven*, §9).
   not arbitrary argv, with a scrubbed environment (only registry-declared vars).
 - Status is written by the poller, never the job (A10).
 
-### 4.3 Timeout — refuse over-cap; bound the projection (Pi #5)
+### 4.3 Timeout — the box enforces only the registry ceiling (Pi #5)
 
-```
-if projected_wall_s × safety > registry.timeout_cap:
-    reject before launch  →  state: timeout_capacity_refused
-else:
-    RuntimeMaxSec = ceil(projected_wall_s × safety)   # within the cap
-```
-`min(cap, projected×safety)` was wrong — it silently admits jobs it predicts will
-time out. **Projection source:** the admission layer accepts a projection **only**
-if it is a bounded Slicer L1 **probe receipt** content-addressably bound to the
-same `job_version`, input/corpus digest, scientific params, and `request_digest`.
-If the box cannot verify that binding, **workload projection/refusal stays inside
-Slicer** and the admission layer enforces **only the registry ceiling** — it never
-accepts a self-asserted projection from the request.
+The admission layer sets **`RuntimeMaxSec = registry.timeout_cap`** and nothing
+more. **Workload projection and pre-launch capacity refusal stay inside Slicer**
+(its L1 measure-before-scale), which owns the corpus/probe binding. This avoids
+the circularity Pi identified — a probe receipt cannot bind to a `request_digest`
+that would in turn have to contain the receipt — and keeps a clean authority
+split: the box owns the *ceiling*, Slicer owns the *workload judgement*. The box
+never accepts a self-asserted projection from a request; `timeout_capacity_refused`
+is a Slicer-internal outcome, surfaced (if at all) as a job that Slicer refuses
+before doing expensive work. The unit still dies at the registry cap if a job
+wedges.
 
 ### 4.4 Trigger
 
@@ -272,9 +310,9 @@ An append-only 60 s heartbeat is ~525,600 commits/year while idle — telemetry
 masquerading as an event log. `jobs/runner` is **current-state only**: a
 **single-writer mutable ref force-updated in place** to a one-entry tree
 `runner.json = { seq, observed_at, current_job|null, health, last_error }`, **no
-retained per-minute history**. It stays **actor-restricted** (box App only) and
-**CI-inert** (AC10). `jobs/queue` and `jobs/status` remain append-only; only this
-telemetry ref is mutable. Poller fetch/API/ref failures set `health` to
+retained per-minute history**. Each snapshot commit is **box-key-signed**, and the
+ref stays **CI-inert** (AC10). `jobs/queue` and `jobs/status` remain append-only;
+only this telemetry ref is mutable. Poller fetch/API/ref failures set `health` to
 `FETCH-FAIL`/`API-BLIND`/`REF-GONE` rather than reading as "no work."
 
 ---
@@ -287,7 +325,7 @@ telemetry ref is mutable. Poller fetch/API/ref failures set `health` to
 | A2 | what the box runs cannot change via git | box-local root-owned registry; `exec_sha256` |
 | A3 | a job cannot exceed its budget | registry cgroup/systemd properties |
 | A4 | a job cannot escalate | `cmpjob`; NoNewPrivileges; empty caps |
-| A5 | a job cannot run twice | atomic ledger (2 keys) + unit-name lock (§3.5) |
+| A5 | a job launches at most once | atomic ledger (2 keys) + unit-name lock; ambiguous ⇒ never auto-relaunch (§3.5) |
 | A6 | a job cannot be orphaned | transient unit, independent lifetime |
 | A7 | a job cannot declare its own success | terminal = systemd exit, poller-published |
 | A8 | stalled ≠ running | monotonic progress counter + timestamp |
@@ -295,9 +333,9 @@ telemetry ref is mutable. Poller fetch/API/ref failures set `health` to
 | A10 | status cannot be forged by the job | poller writes; job has no git credential |
 | A11 | no operational ref triggers a workflow | runtime CI-inert check on all three |
 | A12 | root launcher never trusts poller input | independent re-resolve/verify; fd-only; TOCTOU-safe |
-| A13 | no operational ref is writable/forgeable by an unauthorized actor | per-ref App identity + ruleset (create/update/force/delete) |
+| A13 | no unsigned/unauthorized request is admitted, no forged status is trusted | signature check vs box-local `allowed_signers`; box-key-signed status (§3.1) |
 | A14 | request identity is reproducible | frozen wire bytes + exact-byte digest + linear cursor (§3.6) |
-| A15 | a job predicted to exceed the cap is refused, not launched | `timeout_capacity_refused` (§4.3) |
+| A15 | queue tamper/rewrite cannot pass unnoticed | pinned `last_accepted_commit`; non-descendant ⇒ `QUEUE-TAMPER` (§3.1) |
 
 ---
 
@@ -308,7 +346,7 @@ telemetry ref is mutable. Poller fetch/API/ref failures set `health` to
 | AC1 | A1,A2 | `job:/bin/sh`, unknown `job`, or a colon/oversized id → `rejected`; no unit created |
 | AC2 | A3 | limits set from registry; induced OOM is `CONSTRAINT_MEMCG`; poller alive |
 | AC3 | A4,A12 | uid=`cmpjob`; sudo denied; no key; git-write denied; launcher got only key+fd |
-| AC4 | A5 | fault injected **before** start and **after start/before publish**: reconciliation relaunches neither; 0 recompute; replay rejected |
+| AC4 | A5 | faults injected **before** start, **after start (active)**, and **fast-exit-then-collected**: reconciliation relaunches none; `launch_outcome_unknown` on the ambiguous case; 0 recompute on Slicer resubmit; replay rejected |
 | AC5 | A6 | kill poller mid-job → unit stays `active`; poller reconciles terminal from unit exit |
 | AC6 | A7,A10 | job exits nonzero and *tries* to self-publish success → poller publishes `failed`; self-success ignored |
 | AC7 | A8 | `SIGSTOP` > 2× interval → progress counter stops; `jobs/runner` stays fresh; consumer flags `stalled` |
@@ -316,10 +354,10 @@ telemetry ref is mutable. Poller fetch/API/ref failures set `health` to
 | AC9 | §4.1,§4.3 | terminal records per-job `memory.peak` + `RuntimeMaxSec` |
 | AC10 | A11 | push each of the 3 refs → **runtime Actions-API check**: 0 runs triggered |
 | AC11 | A2 | duplicate `id`, different request digest → `rejected` (integrity), not replay |
-| AC12 | A13 | an unauthorized credential cannot create/update/force/delete any of the 3 refs |
+| AC12 | A13 | a queue commit that is unsigned or signed by a non-`allowed_signers` key → `QUEUE-UNSIGNED`, never admitted; a `jobs/status` commit not signed by the box key → not trusted by δ's verifier |
 | AC13 | A14 | two independent processes derive the same `request_digest` and cursor position from `jobs/queue`; a merge/multi-add/mutating commit is rejected `QUEUE-NONLINEAR`/malformed |
-| AC14 | A12 | launcher rejects a symlinked/replaced/world-writable param object and a path-not-fd invocation (TOCTOU) |
-| AC15 | A15 | a request whose `projected×safety > cap` → `timeout_capacity_refused` before any unit start |
+| AC14 | A12 | launcher rejects a symlinked/replaced/world-writable request object and a path-not-fd invocation (TOCTOU) |
+| AC15 | A15 | force-push/rewrite that drops `last_accepted_commit` from queue history → admission halts `QUEUE-TAMPER` (falsifiable), not silent |
 
 ---
 
@@ -336,7 +374,8 @@ agent.
 1. Build alongside the workflow (no cutover).
 2. Register `slicer` (versioned impl + `exec_sha256`).
 3. **Prove AC1–AC15**, then dispatch one job **both ways** and compare receipts.
-4. Switch the dispatcher to `jobs/queue` (dispatcher App identity).
+4. Switch the dispatcher to `jobs/queue` (signing with the `dispatcher` key in the
+   box-local `allowed_signers`).
 5. **Unregister the self-hosted runner** — deletes the class.
 6. Retire `slicer-status/**` for the `jobs/status` stream.
 
@@ -346,10 +385,12 @@ Rollback before step 5 = re-enable the workflow trigger.
 
 ## 9. Decisions
 
-- **Signing:** required now if transport is a repo-wide deploy key/PAT; deferrable
-  only after per-role App identities + rulesets restrict each operational ref
-  **and** requests bind actor + queue commit SHA + exact-byte request digest.
-  Trigger is a broad/shared credential, not a second dispatcher.
+- **Transport trust (operator-selected: B).** Git-native signed objects: queue
+  commits SSH-signed by a `dispatcher` key, status/runner by the box key, both
+  verified against a **box-local root-owned `allowed_signers`**. No GitHub org,
+  App, or ruleset — `cmp` is a User repo and, more to the point, the box should
+  trust signatures it verifies, not GitHub's ACLs. Ref write-access is not the
+  boundary; signature verification is.
 - **Queue-ref repo:** `usurobor/cmp` for v0; extract only for a second execution
   host/security domain or a non-CMP consumer.
 - **Poller code home:** `cmp` until a second consumer appears.
@@ -363,6 +404,7 @@ Rollback before step 5 = re-enable the workflow trigger.
 ## 10. Cost
 
 A poller (~150 lines) + a minimal root launcher, a registry schema, a status
-writer + status/queue/runner ref-writers, an atomic admission ledger, per-role App
-identities + rulesets, one new user. No broker, no daemon, no database. If the
+writer + status/queue/runner ref-writers, an atomic admission ledger, a
+box-local `allowed_signers` + signature verification, one new user, two signing
+keys (dispatcher, box). No broker, no daemon, no database, no GitHub org. If the
 implementation much exceeds ~300 lines, re-review rather than push through.
