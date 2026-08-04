@@ -423,7 +423,7 @@ agent.
 
 1. Build alongside the workflow (no cutover).
 2. Register `slicer` (versioned impl + `exec_sha256`).
-3. **Prove AC1–AC15**, then dispatch one job **both ways** and compare receipts.
+3. **Prove AC1–AC17**, then dispatch one job **both ways** and compare receipts.
 4. Switch the dispatcher to `jobs/queue` (signing with the `dispatcher` key in the
    box-local `allowed_signers`).
 5. **Unregister the self-hosted runner** — deletes the class.
@@ -445,7 +445,7 @@ Rollback before step 5 = re-enable the workflow trigger.
   host/security domain or a non-CMP consumer.
 - **Poller code home:** `cmp` until a second consumer appears.
 - **Adoption gate:** this design cannot discharge Slicer's implementation ACs. The
-  admission layer must be **built and proven through AC1–AC15** before it supplies
+  admission layer must be **built and proven through AC1–AC17** before it supplies
   per-job cgroup evidence to Sub B. Implementation-cell dispatch and cutover are
   **not** authorized by this document.
 
