@@ -1,24 +1,30 @@
-"""ledger.py — one root-owned transactional admission ledger + outbox (sqlite3).
+"""ledger.py — the one root-owned transactional admission ledger + outbox (sqlite3).
 
-box-job-admission v0.5.1 @ ce91739, §3.5 (at-most-once). stdlib sqlite3 only.
+box-job-admission v0.5.1 @ 270ae9c, §3.5 (at-most-once). Owned EXCLUSIVELY by the
+privileged component (cmp_admitd); the unprivileged poller has no path to this DB.
 
-This is the single source of truth at the PRIVILEGED boundary (Pi impl-audit #2/#6).
-It atomically binds {job_id, request_digest, launch intent, unit identity,
-terminal/outbox state} so that:
-  - the launcher itself takes the durable at-most-once lock (a compromised poller
-    calling the launcher repeatedly for the same signed request is refused by the
-    UNIQUE(request_digest) INSERT, which survives systemd `--collect`);
-  - job_id -> request_digest is a UNIQUE binding (a reused id with a different
-    digest is an integrity violation caught inside the same transaction, AC11);
-  - status/runner publication is crash-consistent: the terminal ledger state, its
-    event_id (durably allocated, never reused after a crash), per-job seq and the
-    exact event payload are committed together in the outbox BEFORE any git write,
-    then published idempotently and acked.
+Launch phases (Pi re-audit #4) make the pre-launch/post-start boundary durable:
+
+    RESERVED  -> lock taken, nothing prepared yet
+    PREPARED  -> verified request delivered as a root-owned read-only file
+    STARTING  -> written immediately BEFORE the backend start call (the boundary)
+    RUNNING   -> written immediately AFTER start returned
+    {SUCCEEDED|FAILED|REJECTED|TIMEOUT|INDETERMINATE}  -> terminal
+
+Only absence AFTER the start boundary (STARTING/RUNNING) is `indeterminate`; a crash
+in RESERVED/PREPARED is a truthful pre-launch REJECTION, never "unknown launch".
+
+Outbox rows carry two durable publication states (Pi re-audit #5): `local_committed`
+(box-signed object written into the local mirror) and `remote_acked` (pushed to
+origin AND the remote tip verified). A row is only ever acked after a verified push,
+so a terminal event can never be silently absent remotely.
 """
 import sqlite3, time, json
 from contextlib import contextmanager
 
 TERMINAL = {"SUCCEEDED", "FAILED", "REJECTED", "TIMEOUT", "INDETERMINATE"}
+NONTERMINAL = {"RESERVED", "PREPARED", "STARTING", "RUNNING"}
+POST_START = {"STARTING", "RUNNING"}          # crossing the start-call boundary
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ledger(
@@ -39,28 +45,18 @@ CREATE TABLE IF NOT EXISTS ledger(
 CREATE TABLE IF NOT EXISTS counters(name TEXT PRIMARY KEY, value INTEGER);
 CREATE TABLE IF NOT EXISTS jobseq(job_id TEXT PRIMARY KEY, seq INTEGER);
 CREATE TABLE IF NOT EXISTS outbox(
-  event_id  INTEGER PRIMARY KEY,
-  kind      TEXT,
-  job_id    TEXT,
-  payload   TEXT,
-  published INTEGER NOT NULL DEFAULT 0
+  event_id        INTEGER PRIMARY KEY,
+  kind            TEXT,
+  job_id          TEXT,
+  payload         TEXT,
+  local_committed INTEGER NOT NULL DEFAULT 0,
+  remote_acked    INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS incidents(
   position TEXT PRIMARY KEY, kind TEXT, detail TEXT, event_id INTEGER
 );
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 """
-
-
-def meta_get(conn, key, default=None):
-    r = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
-    return r["value"] if r else default
-
-
-def meta_set(conn, key, value):
-    with tx(conn):
-        conn.execute("INSERT INTO meta(key,value) VALUES(?,?) "
-                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
 
 
 def connect(path):
@@ -84,25 +80,20 @@ def tx(conn):
 
 
 def _next(conn, name):
-    # first allocation returns 1 (event_id 000001, per-job seq 1, ...)
     conn.execute("INSERT INTO counters(name,value) VALUES(?,1) "
                  "ON CONFLICT(name) DO UPDATE SET value=value+1", (name,))
     return conn.execute("SELECT value FROM counters WHERE name=?", (name,)).fetchone()["value"]
 
 
-def alloc_event_id(conn):
-    return _next(conn, "event_id")
+def meta_get(conn, key, default=None):
+    r = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return r["value"] if r else default
 
 
-def alloc_runner_seq(conn):
+def meta_set(conn, key, value):
     with tx(conn):
-        return _next(conn, "runner_seq")
-
-
-def next_jobseq(conn, job_id):
-    conn.execute("INSERT INTO jobseq(job_id,seq) VALUES(?,1) "
-                 "ON CONFLICT(job_id) DO UPDATE SET seq=seq+1", (job_id,))
-    return conn.execute("SELECT seq FROM jobseq WHERE job_id=?", (job_id,)).fetchone()["seq"]
+        conn.execute("INSERT INTO meta(key,value) VALUES(?,?) "
+                     "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
 
 
 def get(conn, digest):
@@ -115,14 +106,18 @@ def id_digest(conn, job_id):
 
 
 def intents(conn):
-    return conn.execute("SELECT * FROM ledger WHERE state IN ('INTENT','RUNNING')").fetchall()
+    return conn.execute("SELECT * FROM ledger WHERE state IN "
+                        "('RESERVED','PREPARED','STARTING','RUNNING')").fetchall()
+
+
+def in_flight(conn):
+    return conn.execute("SELECT 1 FROM ledger WHERE state IN "
+                        "('RESERVED','PREPARED','STARTING','RUNNING') LIMIT 1").fetchone() is not None
 
 
 def try_intent(conn, digest, job_id, unit, queue_commit, principal, fingerprint):
-    """The durable at-most-once launch lock (§3.5). One transaction:
-    returns 'REPLAY_TERMINAL' | 'IN_FLIGHT' | 'INTEGRITY' | 'CREATED'.
-    principal/fingerprint are recorded WITH the intent (before launch), so a crash
-    after launch cannot lose them (Pi #6)."""
+    """Durable at-most-once lock (§3.5). Returns REPLAY_TERMINAL | IN_FLIGHT |
+    INTEGRITY | CREATED. On CREATED the row is in state RESERVED."""
     with tx(conn):
         row = conn.execute("SELECT state FROM ledger WHERE request_digest=?", (digest,)).fetchone()
         if row:
@@ -132,88 +127,91 @@ def try_intent(conn, digest, job_id, unit, queue_commit, principal, fingerprint)
             return "INTEGRITY"
         now = int(time.time())
         try:
-            conn.execute("INSERT INTO ledger(request_digest,job_id,unit,queue_commit,"
-                         "principal,fingerprint,state,created_at,updated_at) "
-                         "VALUES(?,?,?,?,?,?, 'INTENT', ?, ?)",
+            conn.execute("INSERT INTO ledger(request_digest,job_id,unit,queue_commit,principal,"
+                         "fingerprint,state,created_at,updated_at) VALUES(?,?,?,?,?,?, 'RESERVED', ?, ?)",
                          (digest, job_id, unit, queue_commit, principal, fingerprint, now, now))
         except sqlite3.IntegrityError:
             return "INTEGRITY"
         return "CREATED"
 
 
-def bind_input(conn, digest, input_path, input_digest):
+def set_phase(conn, digest, phase, input_path=None, input_digest=None):
     with tx(conn):
-        conn.execute("UPDATE ledger SET input_path=?, input_digest=?, updated_at=? "
-                     "WHERE request_digest=?", (input_path, input_digest, int(time.time()), digest))
+        if input_path is not None:
+            conn.execute("UPDATE ledger SET state=?, input_path=?, input_digest=?, updated_at=? "
+                         "WHERE request_digest=?", (phase, input_path, input_digest, int(time.time()), digest))
+        else:
+            conn.execute("UPDATE ledger SET state=?, updated_at=? WHERE request_digest=?",
+                         (phase, int(time.time()), digest))
 
 
-def set_running(conn, digest):
+def _stage(conn, kind, job_id, builder):
+    eid = _next(conn, "event_id")
+    if kind == "job":
+        conn.execute("INSERT INTO jobseq(job_id,seq) VALUES(?,1) "
+                     "ON CONFLICT(job_id) DO UPDATE SET seq=seq+1", (job_id,))
+        seq = conn.execute("SELECT seq FROM jobseq WHERE job_id=?", (job_id,)).fetchone()["seq"]
+        body = builder(eid, seq)
+    else:
+        body = builder(eid)
+    conn.execute("INSERT INTO outbox(event_id,kind,job_id,payload) VALUES(?,?,?,?)",
+                 (eid, kind, job_id, json.dumps(body)))
+    return body
+
+
+def enqueue_job_event(conn, job_id, builder):
     with tx(conn):
-        conn.execute("UPDATE ledger SET state='RUNNING', updated_at=? WHERE request_digest=? "
-                     "AND state='INTENT'", (int(time.time()), digest))
+        return _stage(conn, "job", job_id, builder)
 
 
-def record_terminal(conn, digest, state, reason, event_builder, memory_peak=None, runtime_max=None):
-    """Commit terminal ledger state + its status event ATOMICALLY into the outbox
-    (Pi #6: terminal is never persisted without its event, and the event_id is
-    allocated durably so a crash cannot cause reuse). Idempotent: if already
-    terminal, returns None. event_builder(event_id, seq) -> dict payload."""
+def record_terminal(conn, digest, state, reason, builder, memory_peak=None, runtime_max=None):
+    """Atomically commit terminal ledger state + its status event to the outbox
+    (Pi #6). Idempotent: returns None if already terminal."""
     st = state.upper()
     with tx(conn):
         row = conn.execute("SELECT state,job_id FROM ledger WHERE request_digest=?", (digest,)).fetchone()
         if row is None or row["state"] in TERMINAL:
             return None
-        eid = _next(conn, "event_id")
-        # jobseq inline (same tx)
-        conn.execute("INSERT INTO jobseq(job_id,seq) VALUES(?,1) "
-                     "ON CONFLICT(job_id) DO UPDATE SET seq=seq+1", (row["job_id"],))
-        seq = conn.execute("SELECT seq FROM jobseq WHERE job_id=?", (row["job_id"],)).fetchone()["seq"]
-        payload = event_builder(eid, seq)
+        body = _stage(conn, "job", row["job_id"], builder)
         conn.execute("UPDATE ledger SET state=?, memory_peak=?, runtime_max=?, updated_at=? "
                      "WHERE request_digest=?", (st, memory_peak, runtime_max, int(time.time()), digest))
-        conn.execute("INSERT INTO outbox(event_id,kind,job_id,payload,published) VALUES(?,?,?,?,0)",
-                     (eid, "job", row["job_id"], json.dumps(payload)))
-        return payload
+        return body
 
 
-def enqueue_job_event(conn, job_id, event_builder):
-    """Non-terminal job event (admitted/running) staged to outbox atomically."""
-    with tx(conn):
-        eid = _next(conn, "event_id")
-        conn.execute("INSERT INTO jobseq(job_id,seq) VALUES(?,1) "
-                     "ON CONFLICT(job_id) DO UPDATE SET seq=seq+1", (job_id,))
-        seq = conn.execute("SELECT seq FROM jobseq WHERE job_id=?", (job_id,)).fetchone()["seq"]
-        payload = event_builder(eid, seq)
-        conn.execute("INSERT INTO outbox(event_id,kind,job_id,payload,published) VALUES(?,?,?,?,0)",
-                     (eid, "job", job_id, json.dumps(payload)))
-        return payload
-
-
-def incident_once(conn, position, kind, detail, event_builder):
-    """Sticky fault cursor (Pi #5): record ONE incident per offending position;
-    if this position was already recorded, return None (dedupe — do not re-emit the
-    same queue-error every poll)."""
+def incident_once(conn, position, kind, detail, builder):
+    """Sticky deduped fault (Pi #5): one incident per offending position."""
     with tx(conn):
         if conn.execute("SELECT 1 FROM incidents WHERE position=?", (position,)).fetchone():
             return None
         eid = _next(conn, "event_id")
-        payload = event_builder(eid)
+        body = builder(eid)
         conn.execute("INSERT INTO incidents(position,kind,detail,event_id) VALUES(?,?,?,?)",
                      (position, kind, detail, eid))
-        conn.execute("INSERT INTO outbox(event_id,kind,job_id,payload,published) VALUES(?,?,?,?,0)",
-                     (eid, "queue", None, json.dumps(payload)))
-        return payload
+        conn.execute("INSERT INTO outbox(event_id,kind,job_id,payload) VALUES(?,?,?,?)",
+                     (eid, "queue", None, json.dumps(body)))
+        return body
 
 
-def unpublished(conn):
-    return conn.execute("SELECT * FROM outbox WHERE published=0 ORDER BY event_id").fetchall()
+# ---- publication states (Pi #5) -----------------------------------------
+def staged_uncommitted(conn):
+    return conn.execute("SELECT * FROM outbox WHERE local_committed=0 ORDER BY event_id").fetchall()
 
 
-def mark_published(conn, event_id):
+def mark_local_committed(conn, event_id):
     with tx(conn):
-        conn.execute("UPDATE outbox SET published=1 WHERE event_id=?", (event_id,))
+        conn.execute("UPDATE outbox SET local_committed=1 WHERE event_id=?", (event_id,))
 
 
-def in_flight(conn):
-    """FIFO gate: is a non-terminal job currently admitted/running?"""
-    return conn.execute("SELECT 1 FROM ledger WHERE state IN ('INTENT','RUNNING') LIMIT 1").fetchone() is not None
+def unacked(conn):
+    return conn.execute("SELECT * FROM outbox WHERE local_committed=1 AND remote_acked=0 "
+                        "ORDER BY event_id").fetchall()
+
+
+def mark_remote_acked(conn, event_id):
+    with tx(conn):
+        conn.execute("UPDATE outbox SET remote_acked=1 WHERE event_id=?", (event_id,))
+
+
+def alloc_runner_seq(conn):
+    with tx(conn):
+        return _next(conn, "runner_seq")

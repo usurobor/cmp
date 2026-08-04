@@ -236,6 +236,47 @@ class StatusTamper(Exception):
 
 STATUS_SCHEMAS = {"cmp.job-status.v1", "cmp.queue-event.v1"}
 _TERMINAL_STATES = {"succeeded", "failed", "rejected", "timeout", "indeterminate"}
+JOB_STATES = {"queued", "admitted", "running", "succeeded", "failed", "rejected", "timeout", "indeterminate"}
+QUEUE_KINDS = {"QUEUE-MALFORMED", "QUEUE-NONLINEAR", "QUEUE-UNSIGNED", "QUEUE-TAMPER", "LEDGER-INCONSISTENT"}
+EID6 = re.compile(r"^[0-9]{6}$")
+
+
+def _validate_event(ev, eid_name):
+    """Full type/enum/grammar validation of one status event; any violation is a
+    bounded STATUS-TAMPER (Pi re-audit #6), never an uncaught exception or an
+    accepted unknown state."""
+    if not isinstance(ev, dict):
+        raise StatusTamper("STATUS-TAMPER: event is not a JSON object")
+    if not EID6.match(eid_name):
+        raise StatusTamper("STATUS-TAMPER: event-id grammar %r" % eid_name)
+    if str(ev.get("event_id")) != eid_name:
+        raise StatusTamper("STATUS-TAMPER: filename %s != payload event_id %s" % (eid_name, ev.get("event_id")))
+    if not EID6.match(str(ev.get("event_id", ""))):
+        raise StatusTamper("STATUS-TAMPER: payload event_id grammar")
+    sch = ev.get("schema")
+    if sch not in STATUS_SCHEMAS:
+        raise StatusTamper("STATUS-TAMPER: unknown schema %r" % sch)
+    if not isinstance(ev.get("observed_at"), int):
+        raise StatusTamper("STATUS-TAMPER: observed_at must be int")
+    if sch == "cmp.job-status.v1":
+        if not isinstance(ev.get("job_id"), str) or not ev["job_id"]:
+            raise StatusTamper("STATUS-TAMPER: job_id must be a non-empty string")
+        if not isinstance(ev.get("seq"), int) or ev["seq"] < 1:
+            raise StatusTamper("STATUS-TAMPER: seq must be a positive int")
+        if ev.get("state") not in JOB_STATES:
+            raise StatusTamper("STATUS-TAMPER: unknown job state %r" % ev.get("state"))
+        if ev.get("reason") is not None and not isinstance(ev.get("reason"), str):
+            raise StatusTamper("STATUS-TAMPER: reason must be null or string")
+        if ev["state"] in ("rejected", "failed", "timeout", "indeterminate") and not ev.get("reason"):
+            raise StatusTamper("STATUS-TAMPER: state %s requires a reason" % ev["state"])
+        for f in ("request_digest", "queue_commit"):
+            if f in ev and ev[f] is not None and not isinstance(ev[f], str):
+                raise StatusTamper("STATUS-TAMPER: %s must be null or string" % f)
+    else:  # cmp.queue-event.v1
+        if ev.get("kind") not in QUEUE_KINDS:
+            raise StatusTamper("STATUS-TAMPER: unknown queue-event kind %r" % ev.get("kind"))
+        if ev.get("job_id") is not None or ev.get("request_digest") is not None:
+            raise StatusTamper("STATUS-TAMPER: queue-event must have null job_id/request_digest")
 
 
 def read_status(gitdir, ref, box_signers, pin):
@@ -268,11 +309,11 @@ def read_status(gitdir, ref, box_signers, pin):
                 or not adds[0][1].endswith(".json"):
             raise StatusTamper("STATUS-TAMPER: commit must add exactly one events/<id>.json")
         eid_name = adds[0][1][len("events/"):-len(".json")]
-        ev = json.loads(read_blob(gitdir, sha, adds[0][1]))
-        if str(ev.get("event_id")) != eid_name:
-            raise StatusTamper("STATUS-TAMPER: filename %s != payload event_id %s" % (eid_name, ev.get("event_id")))
-        if ev.get("schema") not in STATUS_SCHEMAS:
-            raise StatusTamper("STATUS-TAMPER: unknown schema %r" % ev.get("schema"))
+        try:
+            ev = json.loads(read_blob(gitdir, sha, adds[0][1]).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as e:
+            raise StatusTamper("STATUS-TAMPER: unparseable event bytes: %s" % e)
+        _validate_event(ev, eid_name)
         eid = int(ev["event_id"])
         if eid <= last_eid:
             raise StatusTamper("STATUS-TAMPER: event_id %d regressed/reused (<= %d)" % (eid, last_eid))
@@ -281,11 +322,11 @@ def read_status(gitdir, ref, box_signers, pin):
             jid = ev["job_id"]
             if jid in terminated:
                 raise StatusTamper("STATUS-TAMPER: event after terminal for job %s" % jid)
-            s = int(ev.get("seq", 0))
+            s = ev["seq"]
             if s <= seen_seq.get(jid, 0):
                 raise StatusTamper("STATUS-TAMPER: per-job seq %d regressed for %s" % (s, jid))
             seen_seq[jid] = s
-            if ev.get("state") in _TERMINAL_STATES:
+            if ev["state"] in _TERMINAL_STATES:
                 terminated.add(jid)
         events.append(ev)
     return events, {"commit": tip, "event_id": last_eid,
@@ -312,28 +353,45 @@ def push_ref(gitdir, remote, ref, force=False):
         raise RuntimeError("PUSH-FAIL: %s" % r.stderr.decode()[:200])
 
 
-def status_has_event(gitdir, ref, eid6):
+class OutboxConflict(Exception):
+    pass
+
+
+def status_event_bytes(gitdir, ref, eid6):
     tip = ref_sha(gitdir, ref)
     if tip is None:
-        return False
-    return git(gitdir, "cat-file", "-e", "%s:events/%s.json" % (tip, eid6), check=False).returncode == 0
+        return None
+    r = git(gitdir, "cat-file", "-p", "%s:events/%s.json" % (tip, eid6), check=False)
+    return r.stdout if r.returncode == 0 else None
 
 
 def publish_event(gitdir, ref, eid, payload, boxkey):
     """Idempotently append one box-signed event. Safely repeatable from the same
-    event_id+bytes (Pi #6): if events/<eid>.json is already at the tip, this is a
-    no-op that the caller then acks."""
+    event_id+bytes (Pi #6): if events/<eid>.json already exists it must match these
+    exact bytes (else it is an outbox/status CONFLICT), and republish is a no-op."""
     eid6 = "%06d" % int(eid)
-    if status_has_event(gitdir, ref, eid6):
+    data = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    existing = status_event_bytes(gitdir, ref, eid6)
+    if existing is not None:
+        if existing != data:
+            raise OutboxConflict("event %s already published with different bytes" % eid6)
         return ref_sha(gitdir, ref)
     tip = ref_sha(gitdir, ref)
     base = git(gitdir, "rev-parse", tip + "^{tree}").stdout.decode().strip() if tip else None
-    data = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
     tree = build_tree(gitdir, base, "events/%s.json" % eid6, data)
     ident = "cmp-box <box@cmp> %d +0000" % 1785000000
     sha = make_commit(gitdir, tree, [tip] if tip else [], ident, "status %s" % eid6, boxkey)
     git(gitdir, "update-ref", ref, sha)
     return sha
+
+
+def remote_has_event(origin, ref, eid6):
+    """Confirm origin's ref tip actually carries events/<eid6>.json (Pi #5: ack only
+    after a verified push)."""
+    tip = ref_sha(origin, ref)
+    if tip is None:
+        return False
+    return git(origin, "cat-file", "-e", "%s:events/%s.json" % (tip, eid6), check=False).returncode == 0
 
 
 # ---- runner ref (mutable snapshot, box-signed, §4.5) ---------------------
@@ -377,18 +435,30 @@ def ci_inert_check(owner, repo, refs):
     tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
     out = {}
     for ref in refs:
+        branch = ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref
         if not tok:
-            out[ref] = {"status": "unavailable", "reason": "no_token"}
+            out[ref] = {"status": "unavailable", "reason": "no_token", "branch": branch}
             continue
-        url = "https://api.github.com/repos/%s/%s/actions/runs?branch=%s&per_page=1" % (
-            owner, repo, urllib.request.quote(ref, safe=""))
+        # The Actions API `branch` filter takes the BRANCH NAME, not refs/heads/... .
+        url = "https://api.github.com/repos/%s/%s/actions/runs?branch=%s&per_page=100" % (
+            owner, repo, urllib.request.quote(branch, safe=""))
         try:
             req = urllib.request.Request(url, headers={"Authorization": "Bearer %s" % tok,
                                                        "Accept": "application/vnd.github+json"})
             with urllib.request.urlopen(req, timeout=8) as r:
-                n = json.loads(r.read()).get("total_count", None)
-            out[ref] = {"status": "pass" if n == 0 else "fail", "total_count": n} if n is not None \
-                else {"status": "unavailable", "reason": "no_count"}
+                body = json.loads(r.read())
+            n = body.get("total_count")
+            if n is None:
+                out[ref] = {"status": "unavailable", "reason": "no_count", "branch": branch}
+                continue
+            # independently confirm each returned run's head_branch actually matches
+            mismatched = [run.get("id") for run in body.get("workflow_runs", [])
+                          if run.get("head_branch") != branch]
+            triggered = [run.get("id") for run in body.get("workflow_runs", [])
+                         if run.get("head_branch") == branch]
+            out[ref] = {"status": "pass" if not triggered else "fail", "total_count": n,
+                        "branch": branch, "confirmed_on_branch": len(triggered),
+                        "api_returned_off_branch": len(mismatched)}
         except (urllib.error.URLError, Exception) as e:  # noqa
-            out[ref] = {"status": "unavailable", "reason": type(e).__name__}
+            out[ref] = {"status": "unavailable", "reason": type(e).__name__, "branch": branch}
     return out

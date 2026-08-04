@@ -1,29 +1,13 @@
-"""cmp_launch.py — the hardened root launcher (§4.2) + pluggable unit backend (§4.1).
+"""cmp_launch.py — privileged unit-launch mechanics + pluggable backend (§4.1).
 
-Invoked ONLY as:  cmp-launch <registry-key> <queue-commit-sha> <request-id>
-
-TRUST IS OWNED BY THE PRIVILEGED SIDE (Pi impl-audit #1). The launcher reads its
-mirror / allowed_signers / registry / ledger / backend from its OWN root-owned
-config file (default /etc/cmp-jobs/launcher.json), NOT from anything the caller
-supplies. It ignores every CMP_* trust env var a compromised poller might set; the
-three argv tokens are the only caller input. So a poller that is fully compromised
-can neither pick the trust store, the registry, the mirror, nor swap in a fake
-backend — it can only ask for a job by identity, which the launcher re-verifies.
-
-It then, in ONE sqlite transaction (ledger.try_intent), takes the durable
-at-most-once launch lock (Pi #2) — surviving systemd `--collect` — records the
-verified principal/fingerprint, delivers the exact verified request bytes to the
-job as a root-owned read-only file whose digest is bound in the ledger (Pi #3), and
-launches. Backend selection FAILS CLOSED (Pi #4): a systemd backend with no live
-bus refuses; the fake backend is reachable only under an explicit test_only config
-a production launcher will not carry.
+This module has NO configuration loading and NO environment trust (Pi re-audit #2):
+it is a set of pure functions called ONLY in-process by the privileged owner
+(cmp_admitd), which supplies an already-verified spec and already-trusted paths.
+There is no CLI and no CMP_* env a caller could use to swap the trust store or the
+backend. Backend selection fails closed; unit observation uses the same trusted
+backend identity the privileged owner launched with.
 """
-import os, sys, json, subprocess, tempfile, shutil, time, hashlib
-import refs
-import registry
-import ledger
-
-DEFAULT_CONFIG = "/etc/cmp-jobs/launcher.json"
+import os, json, subprocess, tempfile, shutil, time, pwd
 
 
 class LaunchError(Exception):
@@ -55,22 +39,62 @@ def _atomic_json(path, obj):
         os.close(dfd)
 
 
-# ---- unit backends -------------------------------------------------------
+# ---- verified-request delivery (Pi re-audit #3) --------------------------
+def deliver_request(runtime_dir, unit, raw, run_user):
+    """Create the verified request as an immutable file the job user can READ.
+
+    O_CREAT|O_EXCL|O_NOFOLLOW (cannot follow or overwrite a pre-existing/symlinked
+    path), fsync(file)+fsync(dir), then chgrp to the job user's primary group + mode
+    0440 (root-owned, group-readable by `cmpjob`). ReadOnlyPaths only affects
+    mutability, so read perm is granted explicitly here. Returns (path, note)."""
+    os.makedirs(runtime_dir, mode=0o755, exist_ok=True)
+    path = os.path.join(runtime_dir, "%s.request.json" % unit)
+    if os.path.lexists(path):
+        os.unlink(path)                      # our own prior artifact; O_EXCL guards races below
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o400)
+    try:
+        os.write(fd, raw)
+        os.fsync(fd)
+        note = "root-owned 0440"
+        try:
+            gid = pwd.getpwnam(run_user).pw_gid
+            os.fchown(fd, 0, gid); os.fchmod(fd, 0o440)
+            note = "root:%s 0440 (group-readable by job user)" % run_user
+        except KeyError:
+            os.fchmod(fd, 0o440)             # fixture: job user absent; production chowns root:cmpjob
+            note = "root-owned 0440 (job user %r absent in fixture; prod chowns root:%s)" % (run_user, run_user)
+    finally:
+        os.close(fd)
+    dfd = os.open(runtime_dir, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
+    return path, note
+
+
+def cleanup_request(path):
+    try:
+        if path and os.path.lexists(path):
+            os.unlink(path)
+    except OSError:
+        pass
+
+
+# ---- backends ------------------------------------------------------------
 class FakeUnitBackend:
-    """TEST-ONLY. Records unit lifecycle to a spool dir and simulates the outcomes
-    AC4/AC17 must exercise. Never selectable by a production (non-test_only) config."""
+    """TEST-ONLY. Records unit lifecycle to a spool dir and simulates outcomes."""
     name = "fake-unit"
 
     def __init__(self, spool):
         self.spool = spool
         os.makedirs(spool, exist_ok=True)
 
-    def _path(self, unit):
+    def _p(self, unit):
         return os.path.join(self.spool, unit + ".json")
 
     def start(self, unit, spec, request_path, mode):
-        p = self._path(unit)
-        if os.path.exists(p):
+        if os.path.exists(self._p(unit)):
             raise LaunchError("unit %s already known (unit-name lock)" % unit)
         with open(os.path.join(self.spool, "_starts.log"), "a") as lg:
             lg.write("%s %d %s\n" % (unit, int(time.time()), mode))
@@ -90,10 +114,12 @@ class FakeUnitBackend:
             rec.update(ActiveState="failed", SubState="failed", Result="exit-code",
                        ExecMainStatus=1, memory_peak=5 * 1024 * 1024)
         elif mode == "fast-exit-collected":
-            return unit  # collected before observation: nothing left (show -> None)
+            return unit                      # collected before observation
+        elif mode == "start-fail":
+            raise LaunchError("backend start refused (simulated)")
         else:
             raise LaunchError("unknown fake mode %r" % mode)
-        _atomic_json(p, rec)
+        _atomic_json(self._p(unit), rec)
         return unit
 
 
@@ -112,7 +138,6 @@ class SystemdBackend:
             args.append("--property=ReadOnlyPaths=%s" % r)
         for r in spec.get("output_roots", []):
             args.append("--property=ReadWritePaths=%s" % r)
-        # the verified request is delivered as an immutable root-owned read-only file
         args.append("--property=ReadOnlyPaths=%s" % request_path)
         if spec.get("network", "none") == "none":
             args.append("--property=IPAddressDeny=any")
@@ -131,23 +156,33 @@ def systemd_available():
     return subprocess.run(["systemctl", "is-system-running"], capture_output=True).returncode == 0
 
 
-def make_backend(cfg):
+def make_backend(kind, spool, test_only):
     """FAIL CLOSED (Pi #4). systemd requires a live bus; fake requires test_only."""
-    kind = cfg.get("backend", "systemd")
     if kind == "systemd":
         if not systemd_available():
             raise LaunchError("backend=systemd but no live systemd bus — refusing (fail closed)")
         return SystemdBackend()
     if kind == "fake":
-        if not cfg.get("test_only"):
+        if not test_only:
             raise LaunchError("fake backend requires an explicit test_only config — refusing")
-        return FakeUnitBackend(cfg["spool"])
+        return FakeUnitBackend(spool)
     raise LaunchError("unknown backend %r" % kind)
 
 
+def unit_show(kind, spool, unit):
+    """Observe a unit with the TRUSTED backend identity (Pi #2) — never a
+    caller-supplied backend/spool."""
+    if kind == "systemd" and systemd_available():
+        r = subprocess.run(["systemctl", "show", unit, "--no-page"], capture_output=True)
+        if r.returncode != 0:
+            return None
+        d = dict(l.split("=", 1) for l in r.stdout.decode().splitlines() if "=" in l)
+        return None if d.get("LoadState") == "not-found" else d
+    p = os.path.join(spool, unit + ".json")
+    return json.load(open(p)) if os.path.exists(p) else None
+
+
 def classify_terminal(show):
-    """Map an observed unit (fake dict OR normalized systemctl show) to terminal
-    fields (Pi #4: real memory.peak/runtime before AC9 can be pass_live)."""
     res = show.get("Result", "")
     mem = show.get("memory_peak")
     if mem is None and show.get("MemoryPeak"):
@@ -163,91 +198,3 @@ def classify_terminal(show):
     if res in ("timeout",):
         return "timeout", "RuntimeMaxSec", mem, rt
     return "failed", "exit_%s" % show.get("ExecMainStatus"), mem, rt
-
-
-def unit_show(cfg, unit):
-    """Observe a unit (unprivileged read). Normalizes systemd + fake into one shape."""
-    if cfg.get("backend") == "systemd" and systemd_available():
-        r = subprocess.run(["systemctl", "show", unit, "--no-page"], capture_output=True)
-        if r.returncode != 0:
-            return None
-        d = dict(l.split("=", 1) for l in r.stdout.decode().splitlines() if "=" in l)
-        if d.get("LoadState") == "not-found":
-            return None
-        return d
-    p = os.path.join(cfg.get("spool", ""), unit + ".json")
-    return json.load(open(p)) if os.path.exists(p) else None
-
-
-# ---- config (root-owned; NOT caller-supplied) ----------------------------
-def load_config():
-    path = os.environ.get("CMP_LAUNCHER_CONFIG", DEFAULT_CONFIG)
-    cfg = json.load(open(path))
-    cfg.setdefault("queue_ref", "refs/heads/jobs/queue")
-    for k in ("mirror", "allowed_signers", "registry", "ledger_db", "runtime_dir"):
-        if k not in cfg:
-            raise LaunchError("launcher config missing %s" % k)
-    return cfg
-
-
-# ---- the launcher --------------------------------------------------------
-def launch(job_key, sha, rid, cfg):
-    mirror, ref = cfg["mirror"], cfg["queue_ref"]
-    tip = refs.ref_sha(mirror, ref)
-    if tip is None or (tip != sha and not refs.is_ancestor(mirror, sha, tip)):
-        raise LaunchError("commit %s not on %s" % (sha, ref))
-    adds = refs.added_paths(mirror, sha)
-    want = "requests/%s.json" % rid
-    if len(adds) != 1 or adds[0] != ("A", want):
-        raise LaunchError("commit does not add exactly %s" % want)
-    raw = refs.read_blob(mirror, sha, want)                      # bytes by blob identity
-    try:
-        principal, fpr = refs.verify_commit(mirror, sha, cfg["allowed_signers"])  # AC14
-    except ValueError as e:
-        raise LaunchError("QUEUE-UNSIGNED: %s" % e)
-    digest = refs.request_digest(raw)
-    req = refs.validate_request(raw, rid)
-    if req["job"] != job_key:
-        raise LaunchError("job %r != launch key %r" % (req["job"], job_key))
-    reg = registry.load(cfg["registry"])
-    spec = registry.resolve(reg, job_key, req["job_version"])
-    registry.verify_exec(spec)
-    registry.validate_params(spec, req.get("params", {}))
-    unit = "cmpjob-%s" % rid
-    # durable at-most-once lock owned HERE (survives --collect); binds job_id->digest
-    conn = ledger.connect(cfg["ledger_db"])
-    res = ledger.try_intent(conn, digest, rid, unit, sha, principal, fpr)
-    if res != "CREATED":
-        return {"ok": False, "outcome": res, "request_digest": digest, "unit": unit,
-                "principal": principal, "fingerprint": fpr}
-    # deliver the exact verified request to the job as a root-owned read-only file
-    os.makedirs(cfg["runtime_dir"], exist_ok=True)
-    req_path = os.path.join(cfg["runtime_dir"], "%s.request.json" % unit)
-    with open(req_path, "wb") as f:
-        f.write(raw)
-    os.chmod(req_path, 0o400)
-    ledger.bind_input(conn, digest, req_path, hashlib.sha256(raw).hexdigest())
-    backend = make_backend(cfg)          # fail-closed selection
-    mode = os.environ.get("CMP_FAKE_MODE", "active") if backend.name == "fake-unit" else None
-    backend.start(unit, spec, req_path, mode)
-    return {"ok": True, "outcome": "CREATED", "unit": unit, "request_digest": digest,
-            "principal": principal, "fingerprint": fpr, "backend": backend.name,
-            "input_digest": hashlib.sha256(raw).hexdigest()}
-
-
-def main(argv):
-    if len(argv) != 4:
-        print(json.dumps({"ok": False, "error": "usage: cmp-launch <key> <sha> <id>"}))
-        return 2
-    _, job_key, sha, rid = argv
-    try:
-        out = launch(job_key, sha, rid, load_config())
-    except (LaunchError, refs.RequestError, registry.RegistryError, RuntimeError) as e:
-        print(json.dumps({"ok": False, "error": str(e)}))
-        return 1
-    print(json.dumps(out))
-    return 0 if out.get("ok") else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))
