@@ -238,7 +238,7 @@ queued → admitted → running ⇄ progress → { succeeded | failed | rejected
   the poller. Progress carries a monotonic counter + timestamp so *stalled* ≠
   *running*.
 
-### 3.5 Exactly-once — atomic ledger contract (Pi #6)
+### 3.5 At-most-once launch — atomic ledger contract (Pi #6)
 
 A named ledger, not just components:
 
