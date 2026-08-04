@@ -1,0 +1,348 @@
+{
+  "design": "box-job-admission",
+  "version": "v0.5.1",
+  "design_commit": "8c6e24b",
+  "generated_at": 1785825060,
+  "fixtures_root": "/tmp/cmp-acs-63k1uixa",
+  "unit_backend": "fake-unit",
+  "systemd_available": false,
+  "backend_reason": "systemd-run present but no running systemd/dbus (System has not been booted with systemd as PID 1); fake-unit backend used and labeled truthfully",
+  "signing": "ssh-keygen -Y ed25519; commits SSH-signed and independently verified",
+  "overall_verdict": "PASS",
+  "n_fail": 0,
+  "n_unavailable": 0,
+  "summary": {
+    "AC1": "pass",
+    "AC2": "pass",
+    "AC3": "pass",
+    "AC4": "pass",
+    "AC5": "pass",
+    "AC6": "pass",
+    "AC7": "pass",
+    "AC8": "pass",
+    "AC9": "pass",
+    "AC10": "pass",
+    "AC11": "pass",
+    "AC12": "pass",
+    "AC13": "pass",
+    "AC14": "pass",
+    "AC15": "pass",
+    "AC16": "pass",
+    "AC17": "pass"
+  },
+  "results": [
+    {
+      "ac": "AC1",
+      "covers": "A1,A2",
+      "verdict": "pass",
+      "detail": "bad job/unknown/oversized-id/colon-id all rejected, no unit",
+      "evidence": {
+        "rejected_reasons": [
+          "registry:unknown job '/bin/sh'",
+          "registry:unknown job 'nope'",
+          "schema_invalid",
+          "schema_invalid"
+        ],
+        "unit_files": [],
+        "n_starts": 0
+      },
+      "evidence_digest": "sha256:238ca680914869623835b508082da892cc4d4b03db53e2e40324200e156ab0b3"
+    },
+    {
+      "ac": "AC2",
+      "covers": "A3",
+      "verdict": "pass",
+      "detail": "induced OOM -> CONSTRAINT_MEMCG; limits from registry; poller alive",
+      "evidence": {
+        "oom_event": {
+          "RuntimeMaxSec": 21600,
+          "event_id": "000002",
+          "fingerprint": "SHA256:HY8ZWt3zSNhqf7s44fxZVdzkSW98/5eHw8K4FHEom1o",
+          "job_id": "20260803T110000Z-slicer-oom",
+          "memory_peak": 10737418240,
+          "observed_at": 1785825054,
+          "principal": "dispatcher@cmp",
+          "queue_commit": "e884289128fa069bec8d01650be8d50799ca2df8",
+          "reason": "CONSTRAINT_MEMCG",
+          "request_digest": "8e3a88e45e5fc47400f5602102abcd594d3ed159a67628a6fb2180a24dd7c257",
+          "schema": "cmp.job-status.v1",
+          "seq": 2,
+          "state": "failed",
+          "unit": "cmpjob-20260803T110000Z-slicer-oom"
+        },
+        "runner_health": "OK"
+      },
+      "evidence_digest": "sha256:36ed3c0f5302adf344f0fdeec24bffa2c359fe83cb84b8894f38eda87cb13390"
+    },
+    {
+      "ac": "AC3",
+      "covers": "A4,A12",
+      "verdict": "pass",
+      "detail": "uid=cmpjob; launcher invoked only as cmp-launch <key> <sha> <id>; no poller path/bytes accepted (live sudo/no-git-credential enforced by real cmpjob/systemd deployment, not by fake backend)",
+      "evidence": {
+        "registry_user": "cmpjob",
+        "wrong_arity_rc": [
+          2,
+          2
+        ],
+        "launch_params": [
+          "job_key",
+          "sha",
+          "rid",
+          "cfg"
+        ]
+      },
+      "evidence_digest": "sha256:12473720c4b23670d59c5e1ece1b8f2109eb3b4e4390e081d51ff38d0456eee1"
+    },
+    {
+      "ac": "AC4",
+      "covers": "A5",
+      "verdict": "pass",
+      "detail": "reconciliation relaunches none (before/active/fast-exit); indeterminate on ambiguous; replay rejected; new id relaunches",
+      "evidence": {
+        "launch_deltas": {
+          "after_before_start": 0,
+          "restart_active_delta": 0,
+          "restart_fastexit_delta": 0,
+          "replay_delta": 0,
+          "newid_delta": 1
+        },
+        "indeterminate_reasons": [
+          "launch_outcome_unknown"
+        ],
+        "n_indeterminate": 2
+      },
+      "evidence_digest": "sha256:af76af4a76aa5d6ddf53e441841867965ccc2174ed31b016e3b4ab39301f4266"
+    },
+    {
+      "ac": "AC5",
+      "covers": "A6",
+      "verdict": "pass",
+      "detail": "poller death -> unit stays active; restart adopts (no relaunch); terminal reconciled from unit exit",
+      "evidence": {
+        "stayed_active": true,
+        "relaunched": false,
+        "terminal": {
+          "RuntimeMaxSec": 21600,
+          "event_id": "000003",
+          "fingerprint": "SHA256:HY8ZWt3zSNhqf7s44fxZVdzkSW98/5eHw8K4FHEom1o",
+          "job_id": "20260803T130000Z-adopt",
+          "memory_peak": 1024,
+          "observed_at": 1785825056,
+          "principal": "dispatcher@cmp",
+          "queue_commit": "f6daef913075764bf3db75a101259de4c71d79a2",
+          "reason": null,
+          "request_digest": "19b17d829198751051e24277d3375367200ce1cb239fa1f59c07749c9329ccaf",
+          "schema": "cmp.job-status.v1",
+          "seq": 3,
+          "state": "succeeded",
+          "unit": "cmpjob-20260803T130000Z-adopt"
+        }
+      },
+      "evidence_digest": "sha256:9ca1de6d57092e89ba771c0cc790af82abfada3114836f673fa6cdb9113b3fca"
+    },
+    {
+      "ac": "AC6",
+      "covers": "A7,A10",
+      "verdict": "pass",
+      "detail": "job exits nonzero + self-claims success -> poller publishes failed; self-success ignored; status box-signed only",
+      "evidence": {
+        "terminal": {
+          "RuntimeMaxSec": 21600,
+          "event_id": "000002",
+          "fingerprint": "SHA256:HY8ZWt3zSNhqf7s44fxZVdzkSW98/5eHw8K4FHEom1o",
+          "job_id": "20260803T140000Z-selfclaim",
+          "memory_peak": 5242880,
+          "observed_at": 1785825056,
+          "principal": "dispatcher@cmp",
+          "queue_commit": "9db02f6b709eff936a1e05014430010c7b258463",
+          "reason": "exit_1",
+          "request_digest": "613f914124e5dfad65c0cd8bf42ad4a820d94bc3d9f5cadbbaaccafef7dfc800",
+          "schema": "cmp.job-status.v1",
+          "seq": 2,
+          "state": "failed",
+          "unit": "cmpjob-20260803T140000Z-selfclaim"
+        },
+        "all_status_box_signed": true
+      },
+      "evidence_digest": "sha256:edc3070954d66a916ababe4d90c884cb39163c3835786801b2ada27161df51af"
+    },
+    {
+      "ac": "AC7",
+      "covers": "A8",
+      "verdict": "pass",
+      "detail": "SIGSTOP -> progress counter frozen while jobs/runner stays fresh -> consumer flags stalled",
+      "evidence": {
+        "progress_counter": 5,
+        "runner_seq_advance": [
+          2,
+          5
+        ],
+        "stalled_flag": true
+      },
+      "evidence_digest": "sha256:d3926ec84e8a61080a48291c318d1cad9340cdb83236d6cd0da0ed3491a71fea"
+    },
+    {
+      "ac": "AC8",
+      "covers": "A9",
+      "verdict": "pass",
+      "detail": "stopped/failed poller surfaces FETCH-FAIL + staleness; dead-poller != idle-box",
+      "evidence": {
+        "health": "FETCH-FAIL",
+        "stale_detected": true
+      },
+      "evidence_digest": "sha256:903858406c4b740837422f1f12dab8923d0bb2b32db5df7f8dd5f45b6f4851b2"
+    },
+    {
+      "ac": "AC9",
+      "covers": "\u00a74.1,\u00a74.3",
+      "verdict": "pass",
+      "detail": "terminal records memory.peak + RuntimeMaxSec (clean-exit and OOM)",
+      "evidence": {
+        "succeeded_event": {
+          "RuntimeMaxSec": 21600,
+          "event_id": "000002",
+          "fingerprint": "SHA256:HY8ZWt3zSNhqf7s44fxZVdzkSW98/5eHw8K4FHEom1o",
+          "job_id": "20260803T110100Z-slicer-clean",
+          "memory_peak": 10485760,
+          "observed_at": 1785825055,
+          "principal": "dispatcher@cmp",
+          "queue_commit": "9f1f509ec085e77ebeb477bab02940ebfd8d9953",
+          "reason": null,
+          "request_digest": "486a25dee4ad5244965252bd2c15afde64314be2e465ebea7fd9014d5cd40ea5",
+          "schema": "cmp.job-status.v1",
+          "seq": 2,
+          "state": "succeeded",
+          "unit": "cmpjob-20260803T110100Z-slicer-clean"
+        }
+      },
+      "evidence_digest": "sha256:ba380c45ae6eb13e89bfc992da4a079ccf6a520cdcddbf20dc594af1a1c7b659"
+    },
+    {
+      "ac": "AC10",
+      "covers": "A11",
+      "verdict": "pass",
+      "detail": "Actions API (live token) reports 0 runs triggered by any operational ref \u2014 note: the jobs/{queue,status,runner} branches are not yet pushed to the remote, so 0-runs is trivially satisfied; the runtime check is genuine and must be re-run post-cutover when the refs exist",
+      "evidence": {
+        "per_ref": {
+          "refs/heads/jobs/queue": {
+            "status": "pass",
+            "total_count": 0
+          },
+          "refs/heads/jobs/status": {
+            "status": "pass",
+            "total_count": 0
+          },
+          "refs/heads/jobs/runner": {
+            "status": "pass",
+            "total_count": 0
+          }
+        }
+      },
+      "evidence_digest": "sha256:423da85b731de68820b3dc9822c22922fedf6c2d8148162d28379b91282c8682"
+    },
+    {
+      "ac": "AC11",
+      "covers": "A2",
+      "verdict": "pass",
+      "detail": "same id + different digest -> integrity reject (not benign replay); no launch",
+      "evidence": {
+        "digest_1": "0dc2d9828f11e848",
+        "digest_2": "b75518124ce4f425",
+        "reject_reason": "integrity_duplicate_id"
+      },
+      "evidence_digest": "sha256:d4c6d39c967c4a20f7613edddf24883b76ee8687971c3897538f025e9bd5802d"
+    },
+    {
+      "ac": "AC12",
+      "covers": "A13",
+      "verdict": "pass",
+      "detail": "unsigned & wrong-key queue commits -> QUEUE-UNSIGNED, never admitted; non-box status commit not trusted",
+      "evidence": {
+        "wrongkey_kind": "QUEUE-UNSIGNED",
+        "unsigned_kind": "QUEUE-UNSIGNED",
+        "non_box_status_trusted": false,
+        "unit_created": false
+      },
+      "evidence_digest": "sha256:865489fa8db4ea15ac7843877ca3fe4d88eac07b58c5409431a287c83f50bed0"
+    },
+    {
+      "ac": "AC13",
+      "covers": "A14",
+      "verdict": "pass",
+      "detail": "independent digest+cursor agree; merge->NONLINEAR, multi-add/mutate->MALFORMED",
+      "evidence": {
+        "digest_match": true,
+        "cursor_match": true,
+        "adversarial_kinds": {
+          "merge": "QUEUE-NONLINEAR",
+          "multi_add": "QUEUE-MALFORMED",
+          "mutate": "QUEUE-MALFORMED"
+        }
+      },
+      "evidence_digest": "sha256:ef9959a67537475c213f42c686c8d5b9b4ba85d1a66e7ba544798a31e39bb9da"
+    },
+    {
+      "ac": "AC14",
+      "covers": "A12",
+      "verdict": "pass",
+      "detail": "compromised poller cannot launch a wrong-key commit: launcher's own signature check rejects it (and a properly-signed one launches)",
+      "evidence": {
+        "launcher_rc": 1,
+        "launcher_error": "QUEUE-UNSIGNED: wrong-key",
+        "unit_created": false,
+        "control_signed_launches": true
+      },
+      "evidence_digest": "sha256:633511628e639c2ed6757f4be69d09cc216488b1174162b69f22dc44912a8dcd"
+    },
+    {
+      "ac": "AC15",
+      "covers": "A15",
+      "verdict": "pass",
+      "detail": "force-push dropping last_accepted_commit -> admission halts QUEUE-TAMPER (falsifiable), rogue not admitted",
+      "evidence": {
+        "tamper_events": 1,
+        "rogue_admitted": false,
+        "cursor_was": "408f72a6b96c"
+      },
+      "evidence_digest": "sha256:363168a8589e32b2256e51eaed69a5cee581329774b85fd414f7d5b5299445f0"
+    },
+    {
+      "ac": "AC16",
+      "covers": "A16",
+      "verdict": "pass",
+      "detail": "genuinely box-signed OLD status/runner replays detected (STATUS-TAMPER/RUNNER-REPLAY), not accepted on signature validity",
+      "evidence": {
+        "replayed_object_box_signed": true,
+        "status_tamper_detected": true,
+        "runner_replay_detected": true
+      },
+      "evidence_digest": "sha256:1c3da35a23b3531083134126681f205a55fae0f06c13ef27c99847afa1b5cdb0"
+    },
+    {
+      "ac": "AC17",
+      "covers": "\u00a73.5",
+      "verdict": "pass",
+      "detail": "fast-exit-then-collected -> indeterminate/launch_outcome_unknown, never auto-relaunched",
+      "evidence": {
+        "fastexit_indeterminate": {
+          "event_id": "000006",
+          "fingerprint": "SHA256:HY8ZWt3zSNhqf7s44fxZVdzkSW98/5eHw8K4FHEom1o",
+          "job_id": "20260803T120200Z-fastexit",
+          "observed_at": 1785825055,
+          "principal": "dispatcher@cmp",
+          "queue_commit": "4e247bceea576838d258a900a8bf5e38e5b61bb9",
+          "reason": "launch_outcome_unknown",
+          "request_digest": "13f8fd46f70af6eb121a5748777adc9e7282563bfd92fd9f80ebe515e5c262c2",
+          "schema": "cmp.job-status.v1",
+          "seq": 2,
+          "state": "indeterminate",
+          "unit": "cmpjob-20260803T120200Z-fastexit"
+        },
+        "restart_relaunches": 0
+      },
+      "evidence_digest": "sha256:9cb3e76975f0b5401de7bd5d0a05c9d04c7c83b315b6a37c1ceabf77e1d12776"
+    }
+  ],
+  "receipt_digest": "sha256:904ebbf7c0805790871ec940dac33cf635df468a75dca1e5c45e50dc0751e9f3"
+}
