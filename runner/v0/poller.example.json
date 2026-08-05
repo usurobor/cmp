@@ -1,0 +1,8 @@
+{
+  "gitdir": "/opt/cmp/runner/mirror",
+  "origin": "https://github.com/usurobor/cmp",
+  "registry": "/etc/cmp-jobs/registry.yaml",
+  "state_dir": "/var/lib/cmp/runner",
+  "queue_ref": "refs/heads/jobs/queue",
+  "status_ref": "refs/heads/jobs/status"
+}
