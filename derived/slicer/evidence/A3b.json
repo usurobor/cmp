@@ -1,0 +1,49 @@
+{
+  "ac": "A3b",
+  "name": "measured worker-count selection (threads/batch not_evaluated \u2192 Sub B)",
+  "passed": true,
+  "evidence": {
+    "effective_cpu": 8,
+    "admission_mem_mb": 8038,
+    "measured_dimension": "workers",
+    "measured_candidates": [
+      {
+        "workers": 1,
+        "rows_per_s": 23563.1,
+        "peak_rss_mb": 20,
+        "wall_s": 0.17,
+        "feasible": true
+      },
+      {
+        "workers": 2,
+        "rows_per_s": 40399.3,
+        "peak_rss_mb": 40,
+        "wall_s": 0.198,
+        "feasible": true
+      },
+      {
+        "workers": 4,
+        "rows_per_s": 87341.5,
+        "peak_rss_mb": 81,
+        "wall_s": 0.183,
+        "feasible": true
+      },
+      {
+        "workers": 8,
+        "rows_per_s": 95446.1,
+        "peak_rss_mb": 162,
+        "wall_s": 0.335,
+        "feasible": true
+      }
+    ],
+    "chosen": {
+      "workers": 8,
+      "threads_per_worker": "not_evaluated",
+      "batch": "not_evaluated"
+    },
+    "threads_per_worker_policy": "pinned to 1 (no oversubscription); NOT measured in Sub A",
+    "batch_status": "not_evaluated in Sub A \u2014 requires the real embedding workload (Sub B)",
+    "selection": "measured max rows_per_s among worker-counts with peak_rss<=admission_mem",
+    "no_oversubscription": true
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "ac": "A3.enforce",
+  "name": "over-budget enforced in isolated child (labelled truthfully)",
+  "passed": true,
+  "evidence": {
+    "rlimit_as": {
+      "mechanism": "rlimit_as_rejection",
+      "child_returncode": 42,
+      "child_stderr_tail": "over-budget child: RLIMIT_AS rejected allocation (address-space cap)",
+      "parent_survived": true,
+      "note": "RLIMIT_AS refuses the allocation; this is address-space rejection, not a cgroup OOM-kill"
+    },
+    "cgroup_oom": {
+      "available": false,
+      "reason": "cannot create sub-cgroup: PermissionError"
+    },
+    "future_stage_note": "the real stage inherits the runner cgroup memory.max (kernel kill boundary) and is additionally RLIMIT_AS-capped"
+  }
+}

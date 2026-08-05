@@ -1,0 +1,107 @@
+# CMP Sub 2 — embedding-retrieval slice on cn-sigma.
+# Encodes the clean-binary subset, retrieves semantic-only cross-event
+# candidates, emits blinded fixtures. Price-free, outcome-blind.
+# Self-installs deps to the runner user site (no dependency on box-Sigma).
+name: exp001-embed
+
+on:
+  push:
+    branches: [claude/cmp-experiment-001-issue-c1oov4]
+    paths:
+      - '.github/workflows/exp001-embed.yml'
+      - 'scripts/embed_and_retrieve.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: exp001-embed
+  cancel-in-progress: false
+
+jobs:
+  embed:
+    runs-on: [self-hosted, cn-sigma]
+    env:
+      CMP_DATA_DIR: /var/lib/cmp/data
+      OMP_NUM_THREADS: "1"
+      ORT_NUM_THREADS: "1"
+      TOKENIZERS_PARALLELISM: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Install embedding deps (user site, PEP 668)
+        run: |
+          python3 -m pip install --user --break-system-packages --quiet \
+            "numpy>=1.24" fastembed onnxruntime || \
+          python3 -m pip install --user --break-system-packages --quiet \
+            "numpy>=1.24" fastembed onnxruntime
+          python3 -c "import numpy, fastembed, onnxruntime; print('deps ok', numpy.__version__)"
+      - name: Embed + retrieve + build blinded batch
+        env:
+          STATUS_REF: refs/heads/status/exp001-embed
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          # Background progress heartbeat: force-push the latest progress line to
+          # STATUS_REF (commit subject = progress) every 60s so the cloud side can
+          # read live progress via git — the GitHub API won't serve an in-progress
+          # job's logs. Each push is a fresh root commit (force), no history growth.
+          ( last=""
+            while true; do
+              sleep 60
+              [ -f .embcache/progress.txt ] || continue
+              p=$(head -c 180 .embcache/progress.txt | tr -d '\n')
+              [ -z "$p" ] && continue
+              [ "$p" = "$last" ] && continue
+              last="$p"
+              blob=$(printf 'run %s: %s\n' "${GITHUB_RUN_ID}" "$p" | git hash-object -w --stdin)
+              tree=$(printf '100644 blob %s\tprogress.txt\n' "$blob" | git mktree)
+              cm=$(printf '%s' "$p" | git commit-tree "$tree")
+              git push -f origin "$cm:$STATUS_REF" >/dev/null 2>&1 || true
+            done ) &
+          HB=$!
+          set +e
+          python3 scripts/embed_and_retrieve.py
+          rc=$?
+          kill "$HB" 2>/dev/null || true
+          exit $rc
+      - name: Commit fixtures
+        if: success()
+        env:
+          BRANCH: claude/cmp-experiment-001-issue-c1oov4
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          git add -f derived/classification_input.jsonl derived/evaluation_manifest.jsonl || true
+          if git diff --cached --quiet; then
+            echo "no fixture changes"; exit 0
+          fi
+          git commit -m "exp001 Sub2: semantic-retrieval blinded batch (embed slice) [skip ci]"
+          # rebase onto the current remote tip so the push fast-forwards even if
+          # the branch advanced while this run was queued/running.
+          for i in 1 2 3 4 5; do
+            git fetch origin "$BRANCH" && git rebase "origin/$BRANCH" && \
+              git push origin "HEAD:$BRANCH" && exit 0
+            echo "push retry $i"; git rebase --abort 2>/dev/null || true; sleep 3
+          done
+          echo "failed to push fixtures after retries"; exit 1
+      - name: Record failure marker (so cloud wakes either way)
+        if: failure()
+        env:
+          BRANCH: claude/cmp-experiment-001-issue-c1oov4
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          # base the marker on the current remote tip so the push fast-forwards
+          git fetch origin "$BRANCH" || true
+          git checkout -B "$BRANCH" "origin/$BRANCH" || true
+          mkdir -p derived
+          printf 'exp001-embed FAILED at %s\nrun=%s\n' "$(date -u +%FT%TZ)" "${GITHUB_RUN_ID}" > derived/EMBED_FAILED.txt
+          git add -f derived/EMBED_FAILED.txt || true
+          git commit -m "exp001 Sub2: embed slice FAILED marker [skip ci]" || true
+          for i in 1 2 3; do
+            git push origin "HEAD:$BRANCH" && break
+            git fetch origin "$BRANCH" || true; git rebase "origin/$BRANCH" 2>/dev/null || git rebase --abort 2>/dev/null || true; sleep 3
+          done

@@ -1,0 +1,28 @@
+# EXP001 basket probe — runs the first tradeable-signal check on cn-sigma against
+# the corpus already on the box (/var/lib/cmp/data). Throwaway, like the other
+# exp001 workflows; GitHub Actions is a #1 non-goal and the runner is only our
+# execution channel to the box until a better one exists.
+name: exp001-probe
+
+on:
+  push:
+    branches: [claude/cmp-experiment-001-issue-c1oov4]
+    paths: ['.github/workflows/exp001-probe.yml', 'scripts/probe_baskets.py']
+  workflow_dispatch:
+
+concurrency:
+  group: exp001-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: [self-hosted, cn-sigma]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false          # never wipe the box's gitignored corpus
+      - name: Run basket probe
+        env:
+          CMP_DATA_DIR: /var/lib/cmp/data
+          PROBE_TOP_GROUPS: "60"
+        run: python3 scripts/probe_baskets.py

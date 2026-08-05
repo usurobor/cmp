@@ -1,0 +1,17 @@
+# EXAMPLE box-local job registry — operator-installed to /etc/cmp-jobs/registry.yaml
+# Root-owned (chown root:root, chmod 0644), NOT tracked in any repo. This example
+# lives in the repo only as documentation of shape; the real file never does.
+#
+# Single fixed entry. The git request selects {id, mode, n} only; every path,
+# user, and resource ceiling below is chosen by the operator here, never by git.
+# Flat mapping (a YAML subset the stdlib-only poller parses directly).
+
+job:      slicer
+exec:     /opt/cmp/bin/slicer-run          # the fixed Slicer entrypoint (slicer_run.py)
+user:     cmpjob                            # non-root run user (no sudo/keys/git-cred)
+dataset:  /var/lib/cmp/data/corpus.jsonl    # operator-designated on-box dataset
+modes:    sample,full                       # allowed request modes
+n_max:    400000                            # upper bound on request n
+memory:   10G                               # -> MemoryMax (MemorySwapMax=0)
+cpu:      600%                              # -> CPUQuota
+timeout:  21600                             # -> RuntimeMaxSec (seconds; 6h)

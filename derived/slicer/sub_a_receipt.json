@@ -1,0 +1,622 @@
+{
+  "schema": "slicer-sub-a-receipt/2.4",
+  "sub": "A",
+  "issue_contract": "slicer v2.2 @ 792f65d",
+  "run_id": "30824612821",
+  "git_sha": "504550977fcf62bfe4195ba8ca9597912f781e0c",
+  "generated_at": "2026-08-03T14:50:40Z",
+  "mode": "sub_a_synthetic",
+  "catalog_digest": "cf293490f6a95748",
+  "state_root": "/home/sigma/.cmp/slicer/state",
+  "effective_capacity": {
+    "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
+    "host_mem_available_mb": 15330,
+    "memory_high_mb": 10240,
+    "memory_max_mb": 12288,
+    "memory_current_mb": 192,
+    "cgroup_lifetime_peak_mb": 457,
+    "run_scoped_peak_rss_mb": 112,
+    "peak_note": "cgroup memory.peak is the long-lived runner-service cgroup LIFETIME high-water, not this run's peak; run_scoped_peak_rss_mb is a process-tree sampler value. A true per-stage cgroup peak needs a delegated cgroup (Sub B).",
+    "swap_max_mb": null,
+    "swap_current_mb": 0,
+    "cpuset_count": 8,
+    "quota_cores": null,
+    "effective_cpu": 8,
+    "raw_available_mem_mb": 10048,
+    "safety_factor": 0.8,
+    "admission_mem_mb": 8038
+  },
+  "probe": {
+    "rows_per_s": 21.6,
+    "projected_full_n": 222855,
+    "projected_peak_mb": 286.9,
+    "projected_wall_min": 172.19,
+    "mem_budget_mb": 8038,
+    "wall_budget_min": 120.0,
+    "verdict": "refuse",
+    "reason": "projected>budget",
+    "probe_wall_clock_s": 0.093,
+    "rows_processed": 2
+  },
+  "oracles": [
+    {
+      "ac": "A4.heartbeat",
+      "name": "heartbeat publish + independent remote round-trip",
+      "passed": true,
+      "evidence": {
+        "initial_roundtrip": {
+          "verified": true,
+          "fetched": {
+            "at": "2026-08-03T14:50:29Z",
+            "heartbeat_seq": 1,
+            "run_id": "30824612821",
+            "stage": "spine-init",
+            "status": "alive"
+          },
+          "fetched_digest": "d688e533af78cd9ff67d9139b2065c370b62bbb3601d23222348c3e69d8aa776",
+          "expected_digest": "d688e533af78cd9ff67d9139b2065c370b62bbb3601d23222348c3e69d8aa776",
+          "run_id_match": true,
+          "seq_match": true
+        },
+        "seq_incremented": true,
+        "ref": "refs/heads/slicer-status/30824612821"
+      }
+    },
+    {
+      "ac": "A1",
+      "name": "catalog governs I/O operationally (real refusal observed)",
+      "passed": true,
+      "evidence": {
+        "unregistered_refused": true,
+        "unregistered_msg": "catalog: unregistered output 'not_a_registered_dataset' \u2014 refusing to publish",
+        "readonly_output_refused": true,
+        "readonly_msg": "catalog: 'synthetic_seed' is read_only \u2014 cannot write",
+        "write_through_input_refused": true,
+        "write_msg": "read-only catalog input '/opt/actions-runner/_work/cmp/cmp/slicer/catalog.json': write refused",
+        "stage_output_root": "/home/sigma/.cmp/slicer/state/shards",
+        "stage_wrote_files": [
+          "1e904a433f2af671/exec_ledger.jsonl",
+          "1e904a433f2af671/key.json",
+          "1e904a433f2af671/shard-00000.bin",
+          "1e904a433f2af671/shard-00001.bin",
+          "1e904a433f2af671/completed/shard-00001.json",
+          "1e904a433f2af671/completed/shard-00000.json"
+        ],
+        "wrote_outside_catalog_root": []
+      }
+    },
+    {
+      "ac": "A3.measure",
+      "name": "cgroup-effective capacity measured + safety factor applied",
+      "passed": true,
+      "evidence": {
+        "effective_capacity": {
+          "cgroup_base": "/sys/fs/cgroup/system.slice/actions.runner.usurobor-cmp.cn-sigma.service",
+          "host_mem_available_mb": 15330,
+          "memory_high_mb": 10240,
+          "memory_max_mb": 12288,
+          "memory_current_mb": 192,
+          "cgroup_lifetime_peak_mb": 457,
+          "run_scoped_peak_rss_mb": 112,
+          "peak_note": "cgroup memory.peak is the long-lived runner-service cgroup LIFETIME high-water, not this run's peak; run_scoped_peak_rss_mb is a process-tree sampler value. A true per-stage cgroup peak needs a delegated cgroup (Sub B).",
+          "swap_max_mb": null,
+          "swap_current_mb": 0,
+          "cpuset_count": 8,
+          "quota_cores": null,
+          "effective_cpu": 8,
+          "raw_available_mem_mb": 10048,
+          "safety_factor": 0.8,
+          "admission_mem_mb": 8038
+        },
+        "safety_factor_applied": true,
+        "cgroup_effective_derived": true
+      }
+    },
+    {
+      "ac": "A3b",
+      "name": "measured worker-count selection (threads/batch not_evaluated \u2192 Sub B)",
+      "passed": true,
+      "evidence": {
+        "effective_cpu": 8,
+        "admission_mem_mb": 8038,
+        "measured_dimension": "workers",
+        "measured_candidates": [
+          {
+            "workers": 1,
+            "rows_per_s": 23563.1,
+            "peak_rss_mb": 20,
+            "wall_s": 0.17,
+            "feasible": true
+          },
+          {
+            "workers": 2,
+            "rows_per_s": 40399.3,
+            "peak_rss_mb": 40,
+            "wall_s": 0.198,
+            "feasible": true
+          },
+          {
+            "workers": 4,
+            "rows_per_s": 87341.5,
+            "peak_rss_mb": 81,
+            "wall_s": 0.183,
+            "feasible": true
+          },
+          {
+            "workers": 8,
+            "rows_per_s": 95446.1,
+            "peak_rss_mb": 162,
+            "wall_s": 0.335,
+            "feasible": true
+          }
+        ],
+        "chosen": {
+          "workers": 8,
+          "threads_per_worker": "not_evaluated",
+          "batch": "not_evaluated"
+        },
+        "threads_per_worker_policy": "pinned to 1 (no oversubscription); NOT measured in Sub A",
+        "batch_status": "not_evaluated in Sub A \u2014 requires the real embedding workload (Sub B)",
+        "selection": "measured max rows_per_s among worker-counts with peak_rss<=admission_mem",
+        "no_oversubscription": true
+      }
+    },
+    {
+      "ac": "A5",
+      "name": "scientific-param identity vs REAL execution-partition variance",
+      "passed": true,
+      "evidence": {
+        "universe_size": 8,
+        "partition_x": "1 worker, contiguous 0..n-1",
+        "partition_y": "4 workers, interleaved by id%4",
+        "y_worker_groups": [
+          [
+            0,
+            4
+          ],
+          [
+            1,
+            5
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            3,
+            7
+          ]
+        ],
+        "same_scientific_identical_merged_outputs": true,
+        "items_x": 8,
+        "items_y": 8,
+        "items_z": 8,
+        "changed_scientific_differs": true,
+        "scientific_digest_const": "a9553e38da9e4156",
+        "scientific_digest_changed": "f5f07a9bff9eaa5a",
+        "note": "real partitions differ in worker count, grouping, and order; identity is over frozen scientific params, so merged outputs match across partitions"
+      }
+    },
+    {
+      "ac": "A2",
+      "name": "idempotency key wired into eligibility + recoverable completion state",
+      "passed": true,
+      "evidence": {
+        "first_run_completed": [
+          0,
+          1,
+          2
+        ],
+        "rerun_executed": [],
+        "rerun_zero_work": true,
+        "changed_key_executed": [
+          0,
+          1,
+          2
+        ],
+        "changed_key_reran": true,
+        "key_v1": "8ba69f5987ebe41d",
+        "key_v2": "acdb577be14eff80",
+        "stray_tmp_not_counted": true,
+        "corrupt_marker_recomputed_not_poisoned": true,
+        "completion_protocol": "one atomic marker file per shard (no shared append to corrupt)",
+        "key_components": [
+          "scientific_digest",
+          "git_sha",
+          "stage_impl_version",
+          "catalog_digest",
+          "schema_version",
+          "dep_lock_digest"
+        ]
+      }
+    },
+    {
+      "ac": "A3.refuse",
+      "name": "capacity refusal before expensive work (with numbers)",
+      "passed": true,
+      "evidence": {
+        "forced_budget_probe": {
+          "rows_per_s": 1065.6,
+          "projected_full_n": 222855,
+          "projected_peak_mb": 286.9,
+          "projected_wall_min": 3.49,
+          "mem_budget_mb": 1,
+          "wall_budget_min": 120.0,
+          "verdict": "refuse",
+          "reason": "projected>budget",
+          "probe_wall_clock_s": 0.002,
+          "rows_processed": 2
+        }
+      }
+    },
+    {
+      "ac": "A6.refuse",
+      "name": "uncheckpointable long stage refused before launch",
+      "passed": true,
+      "evidence": {
+        "threshold_s": 30.0,
+        "long_no_checkpoint": {
+          "admit": false,
+          "reason": "projected work exceeds max_uncheckpointed_work_s and no checkpoint boundary",
+          "projected_wall_s": 3600.0,
+          "threshold_s": 30.0,
+          "checkpoint_boundary": "none"
+        },
+        "long_with_checkpoint": {
+          "admit": true,
+          "reason": "checkpointed or within uncheckpointed budget",
+          "projected_wall_s": 3600.0,
+          "threshold_s": 30.0,
+          "checkpoint_boundary": "shard",
+          "launched": true
+        },
+        "short_no_checkpoint": {
+          "admit": true,
+          "reason": "checkpointed or within uncheckpointed budget",
+          "projected_wall_s": 1.0,
+          "threshold_s": 30.0,
+          "checkpoint_boundary": "none",
+          "launched": true
+        },
+        "stage_descriptor_used_on_real_path": {
+          "checkpoint_boundary": "shard"
+        },
+        "refused_without_launching": true,
+        "note": "admit_stage gates every real launch (see A6); the uncheckpointable long stage never ran"
+      }
+    },
+    {
+      "ac": "A3.enforce",
+      "name": "over-budget enforced in isolated child (labelled truthfully)",
+      "passed": true,
+      "evidence": {
+        "rlimit_as": {
+          "mechanism": "rlimit_as_rejection",
+          "child_returncode": 42,
+          "child_stderr_tail": "over-budget child: RLIMIT_AS rejected allocation (address-space cap)",
+          "parent_survived": true,
+          "note": "RLIMIT_AS refuses the allocation; this is address-space rejection, not a cgroup OOM-kill"
+        },
+        "cgroup_oom": {
+          "available": false,
+          "reason": "cannot create sub-cgroup: PermissionError"
+        },
+        "future_stage_note": "the real stage inherits the runner cgroup memory.max (kernel kill boundary) and is additionally RLIMIT_AS-capped"
+      }
+    },
+    {
+      "ac": "A3.swap",
+      "name": "swap-policy enforcement: RSS-growth monitor preempts swap (real termination)",
+      "passed": true,
+      "evidence": {
+        "swap_max_mb": null,
+        "swap_current_mb": 0,
+        "mode": "rss_guard_preempts_swap",
+        "monitored_metric": "VmRSS",
+        "threshold_mb": 96,
+        "observed_peak_rss_mb": 97,
+        "child_killed_by_monitor": true,
+        "child_returncode": -9,
+        "child_killed_signal": 9,
+        "swap_current_bounded": true,
+        "note": "installed sampler thread SIGKILLs the child over a bound RSS threshold, preempting swap"
+      }
+    },
+    {
+      "ac": "A6",
+      "name": "checkpoint/resume after SIGKILL (measured recompute cost)",
+      "passed": true,
+      "evidence": {
+        "kdir": "/home/sigma/.cmp/slicer/state/resume/539564605b957e19",
+        "before": [
+          0,
+          1,
+          2
+        ],
+        "after": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "executed_on_resume": [
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "recomputed": 0,
+        "killed_signal": 0,
+        "admit": {
+          "admit": true,
+          "reason": "checkpointed or within uncheckpointed budget",
+          "projected_wall_s": 0.0,
+          "threshold_s": 30.0,
+          "checkpoint_boundary": "shard"
+        },
+        "max_shard_work_s": 0.051,
+        "resumed_not_restarted": true,
+        "measured_recomputed_shards": 0,
+        "measured_max_shard_work_s": 0.051
+      }
+    },
+    {
+      "ac": "A6.durable",
+      "name": "durable run-id-independent resume across distinct GITHUB_RUN_IDs",
+      "passed": true,
+      "evidence": {
+        "state_root": "/home/sigma/.cmp/slicer/state",
+        "runner_temp": "/opt/actions-runner/_work/_temp",
+        "durable_root_outside_checkout_and_runner_temp": true,
+        "run_id_a": "runA-111",
+        "run_id_b": "runB-222",
+        "distinct_run_ids": true,
+        "checkpoint_dir": "/home/sigma/.cmp/slicer/state/resume_durable/5c8c1980bd78d7ab",
+        "checkpoint_path_run_id_independent": true,
+        "completed_before_run_b": [
+          0,
+          1,
+          2
+        ],
+        "executed_on_run_b": [
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "measured_recomputed_shards": 0,
+        "completed_final": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "note": "run B resolved run A's checkpoint via the identity key alone and recomputed nothing; the durable root survives job teardown (not RUNNER_TEMP, not the checkout)"
+      }
+    },
+    {
+      "ac": "A7",
+      "name": "injected-error surfaced via heartbeat (never silent)",
+      "passed": true,
+      "evidence": {
+        "child_returncode": 1,
+        "stderr_surfaced": true,
+        "error_heartbeat_roundtrip": {
+          "verified": true,
+          "fetched": {
+            "at": "2026-08-03T14:50:38Z",
+            "error_class": "injected",
+            "heartbeat_seq": 500,
+            "message": "injected error at shard 2",
+            "run_id": "30824612821",
+            "shard": 2,
+            "stage": "err",
+            "status": "error"
+          },
+          "fetched_digest": "f3eb2ef1c15f9f141171955e1322379adfb090e510f1679372467041214d83d7",
+          "expected_digest": "f3eb2ef1c15f9f141171955e1322379adfb090e510f1679372467041214d83d7",
+          "run_id_match": true,
+          "seq_match": true
+        },
+        "error_visible_on_observability_surface": true,
+        "silent_skip": false
+      }
+    },
+    {
+      "ac": "A4.no-trigger",
+      "name": "slicer-status/** triggers no workflow (static + runtime API)",
+      "passed": true,
+      "evidence": {
+        "sample_ref": "slicer-status/deadbeef",
+        "workflows": {
+          "exp001-batch.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-collect.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-embed.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-inspect.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-probe.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          },
+          "exp001-relations.yml": {
+            "has_push": false,
+            "branches": []
+          },
+          "slicer-sub-a.yml": {
+            "has_push": true,
+            "branches": [
+              "claude/cmp-experiment-001-issue-c1oov4"
+            ]
+          }
+        },
+        "offending_workflows": [],
+        "runtime_api_check": {
+          "available": true,
+          "status_branch": "slicer-status/30824612821",
+          "runs_triggered_by_status_ref": 0,
+          "passed": true,
+          "checked_at": "2026-08-03T14:50:40Z"
+        }
+      }
+    }
+  ],
+  "invariants_self_check": {
+    "measured_before_scale": true,
+    "resumable": true,
+    "durably_resumable": true,
+    "refuses_uncheckpointable": true,
+    "observable": true,
+    "memory_bounded": true,
+    "errors_surfaced": true,
+    "failure_is_cheap": true
+  },
+  "failure_cost": {
+    "probe_wall_clock_s": 0.093,
+    "rows_processed_before_refusal": 2,
+    "measured_recomputed_shards_after_kill": 0,
+    "measured_max_uncheckpointed_work_s": 0.051
+  },
+  "execution_status": "completed",
+  "contract_status": "accepted",
+  "retrieval_instrument_status": "not_evaluated",
+  "discovery_status": "not_run",
+  "prerequisite_receipts": [],
+  "remote_state_sink": "refs/heads/slicer-status/30824612821",
+  "scope_notes": {
+    "A3b": "workers measured; threads_per_worker + batch not_evaluated (Sub B)",
+    "peak": "run_scoped_peak_rss_mb is a process-tree sampler value; cgroup memory.peak is the service cgroup lifetime high-water; per-stage cgroup peak deferred to Sub B"
+  },
+  "notes": "Sub A only \u2014 synthetic long stage; no model/corpus/ANN/retrieval.",
+  "terminal_heartbeat": {
+    "verified": true,
+    "fetched": {
+      "at": "2026-08-03T14:50:40Z",
+      "contract_status": "accepted",
+      "heartbeat_seq": 999,
+      "run_id": "30824612821",
+      "stage": "sub-a-done",
+      "status": "completed"
+    },
+    "fetched_digest": "b084029c225007d7e7ac140cfb02060f94958086b36b513229efd5ea3b2253cf",
+    "expected_digest": "b084029c225007d7e7ac140cfb02060f94958086b36b513229efd5ea3b2253cf",
+    "run_id_match": true,
+    "seq_match": true
+  },
+  "evidence_refs": [
+    {
+      "ac": "A4.heartbeat",
+      "file": "evidence/A4_heartbeat.json",
+      "sha256": "1ac926516c23cd0b292c01b91ea9f79c742850cc5a2d2202f3eb49cf0f8223f0",
+      "passed": true
+    },
+    {
+      "ac": "A1",
+      "file": "evidence/A1.json",
+      "sha256": "8aa0229ad23b2654f9b1b6fbaeb4e64661219388329ca63766b5e1ce95335bb9",
+      "passed": true
+    },
+    {
+      "ac": "A3.measure",
+      "file": "evidence/A3_measure.json",
+      "sha256": "ade9555d1d4c266bdbf65940bf326ddb72ea1b6cb9c3a2c0162e1b2f112d928a",
+      "passed": true
+    },
+    {
+      "ac": "A3b",
+      "file": "evidence/A3b.json",
+      "sha256": "a08064e909a0deb63f3c7665c4ba1c0ffe04cd516fd5622a7ba0776a8164a3dc",
+      "passed": true
+    },
+    {
+      "ac": "A5",
+      "file": "evidence/A5.json",
+      "sha256": "72dcc2884c59239d014c049ba37baae5d8d7d62d2384a416fea0ae8b98b1331c",
+      "passed": true
+    },
+    {
+      "ac": "A2",
+      "file": "evidence/A2.json",
+      "sha256": "20902f5bd74d6ce09dc7359907e8c0c9b8ac9a30f31edacccc2c8b257fd2db2d",
+      "passed": true
+    },
+    {
+      "ac": "A3.refuse",
+      "file": "evidence/A3_refuse.json",
+      "sha256": "dfe6715d2fb13747593f0d61998e8f2733b65faf264822bc9bd358ce5cdb54be",
+      "passed": true
+    },
+    {
+      "ac": "A6.refuse",
+      "file": "evidence/A6_refuse.json",
+      "sha256": "2886615fc662c0af845b3059fd6099aba5495be2dd1af1718d863d6565fabd5d",
+      "passed": true
+    },
+    {
+      "ac": "A3.enforce",
+      "file": "evidence/A3_enforce.json",
+      "sha256": "c183e7c20b86ed3f2d0ad4990cedefccd605a153c4a01fac39a0fdc9228a3012",
+      "passed": true
+    },
+    {
+      "ac": "A3.swap",
+      "file": "evidence/A3_swap.json",
+      "sha256": "4b340e5460a6fc1d0291acab7985e39f54e8ec1b6d2ea1a3984fd0487b100125",
+      "passed": true
+    },
+    {
+      "ac": "A6",
+      "file": "evidence/A6.json",
+      "sha256": "9c133d1284c44c147b81544db84cf4fc9a92a8671b9cdf11ae2d8b36ac7af883",
+      "passed": true
+    },
+    {
+      "ac": "A6.durable",
+      "file": "evidence/A6_durable.json",
+      "sha256": "6319d46a861561e35aaf060241d395b902609f35665006ab33d64e95c31b9d96",
+      "passed": true
+    },
+    {
+      "ac": "A7",
+      "file": "evidence/A7.json",
+      "sha256": "42ca0e9476e35986964c73a93cb3776548ee66cd3ce740981588ef722f6fea8a",
+      "passed": true
+    },
+    {
+      "ac": "A4.no-trigger",
+      "file": "evidence/A4_no-trigger.json",
+      "sha256": "9528837ee12637bf749035373934c7feeb9c27712620d4f932f3fefce56aa594",
+      "passed": true
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "ac": "A5",
+  "name": "scientific-param identity vs REAL execution-partition variance",
+  "passed": true,
+  "evidence": {
+    "universe_size": 8,
+    "partition_x": "1 worker, contiguous 0..n-1",
+    "partition_y": "4 workers, interleaved by id%4",
+    "y_worker_groups": [
+      [
+        0,
+        4
+      ],
+      [
+        1,
+        5
+      ],
+      [
+        2,
+        6
+      ],
+      [
+        3,
+        7
+      ]
+    ],
+    "same_scientific_identical_merged_outputs": true,
+    "items_x": 8,
+    "items_y": 8,
+    "items_z": 8,
+    "changed_scientific_differs": true,
+    "scientific_digest_const": "a9553e38da9e4156",
+    "scientific_digest_changed": "f5f07a9bff9eaa5a",
+    "note": "real partitions differ in worker count, grouping, and order; identity is over frozen scientific params, so merged outputs match across partitions"
+  }
+}

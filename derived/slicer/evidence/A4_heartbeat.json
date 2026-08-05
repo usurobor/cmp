@@ -1,0 +1,23 @@
+{
+  "ac": "A4.heartbeat",
+  "name": "heartbeat publish + independent remote round-trip",
+  "passed": true,
+  "evidence": {
+    "initial_roundtrip": {
+      "verified": true,
+      "fetched": {
+        "at": "2026-08-03T14:50:29Z",
+        "heartbeat_seq": 1,
+        "run_id": "30824612821",
+        "stage": "spine-init",
+        "status": "alive"
+      },
+      "fetched_digest": "d688e533af78cd9ff67d9139b2065c370b62bbb3601d23222348c3e69d8aa776",
+      "expected_digest": "d688e533af78cd9ff67d9139b2065c370b62bbb3601d23222348c3e69d8aa776",
+      "run_id_match": true,
+      "seq_match": true
+    },
+    "seq_incremented": true,
+    "ref": "refs/heads/slicer-status/30824612821"
+  }
+}

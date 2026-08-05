@@ -1,0 +1,33 @@
+{
+  "ac": "A2",
+  "name": "idempotency key wired into eligibility + recoverable completion state",
+  "passed": true,
+  "evidence": {
+    "first_run_completed": [
+      0,
+      1,
+      2
+    ],
+    "rerun_executed": [],
+    "rerun_zero_work": true,
+    "changed_key_executed": [
+      0,
+      1,
+      2
+    ],
+    "changed_key_reran": true,
+    "key_v1": "8ba69f5987ebe41d",
+    "key_v2": "acdb577be14eff80",
+    "stray_tmp_not_counted": true,
+    "corrupt_marker_recomputed_not_poisoned": true,
+    "completion_protocol": "one atomic marker file per shard (no shared append to corrupt)",
+    "key_components": [
+      "scientific_digest",
+      "git_sha",
+      "stage_impl_version",
+      "catalog_digest",
+      "schema_version",
+      "dep_lock_digest"
+    ]
+  }
+}

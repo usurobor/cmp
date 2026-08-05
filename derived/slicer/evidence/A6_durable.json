@@ -1,0 +1,39 @@
+{
+  "ac": "A6.durable",
+  "name": "durable run-id-independent resume across distinct GITHUB_RUN_IDs",
+  "passed": true,
+  "evidence": {
+    "state_root": "/home/sigma/.cmp/slicer/state",
+    "runner_temp": "/opt/actions-runner/_work/_temp",
+    "durable_root_outside_checkout_and_runner_temp": true,
+    "run_id_a": "runA-111",
+    "run_id_b": "runB-222",
+    "distinct_run_ids": true,
+    "checkpoint_dir": "/home/sigma/.cmp/slicer/state/resume_durable/5c8c1980bd78d7ab",
+    "checkpoint_path_run_id_independent": true,
+    "completed_before_run_b": [
+      0,
+      1,
+      2
+    ],
+    "executed_on_run_b": [
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "measured_recomputed_shards": 0,
+    "completed_final": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "note": "run B resolved run A's checkpoint via the identity key alone and recomputed nothing; the durable root survives job teardown (not RUNNER_TEMP, not the checkout)"
+  }
+}

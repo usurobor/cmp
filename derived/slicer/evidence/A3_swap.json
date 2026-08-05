@@ -1,0 +1,18 @@
+{
+  "ac": "A3.swap",
+  "name": "swap-policy enforcement: RSS-growth monitor preempts swap (real termination)",
+  "passed": true,
+  "evidence": {
+    "swap_max_mb": null,
+    "swap_current_mb": 0,
+    "mode": "rss_guard_preempts_swap",
+    "monitored_metric": "VmRSS",
+    "threshold_mb": 96,
+    "observed_peak_rss_mb": 97,
+    "child_killed_by_monitor": true,
+    "child_returncode": -9,
+    "child_killed_signal": 9,
+    "swap_current_bounded": true,
+    "note": "installed sampler thread SIGKILLs the child over a bound RSS threshold, preempting swap"
+  }
+}

@@ -1,0 +1,13 @@
+# EXAMPLE — operator-installed to /etc/systemd/system/cmp-poller.timer
+# 60 s cadence. A stale jobs/status snapshot (no fresh runner.json heartbeat)
+# therefore means the box/poller is down — silence is falsifiable.
+[Unit]
+Description=Run the CMP box job poller every 60 s
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=60
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

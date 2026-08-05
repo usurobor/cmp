@@ -1,0 +1,19 @@
+{
+  "ac": "A3.refuse",
+  "name": "capacity refusal before expensive work (with numbers)",
+  "passed": true,
+  "evidence": {
+    "forced_budget_probe": {
+      "rows_per_s": 1065.6,
+      "projected_full_n": 222855,
+      "projected_peak_mb": 286.9,
+      "projected_wall_min": 3.49,
+      "mem_budget_mb": 1,
+      "wall_budget_min": 120.0,
+      "verdict": "refuse",
+      "reason": "projected>budget",
+      "probe_wall_clock_s": 0.002,
+      "rows_processed": 2
+    }
+  }
+}

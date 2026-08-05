@@ -1,0 +1,338 @@
+{
+  "design": "box-job-admission",
+  "version": "v0.5.1",
+  "design_commit": "270ae9c",
+  "generated_at": 1785831013,
+  "fixtures_root": "/tmp/cmp-acs-t250upbs",
+  "substrate": {
+    "unit_backend": "fake-unit",
+    "systemd_available": false,
+    "remote": "local bare-repo origin (NOT GitHub)"
+  },
+  "architecture": "privilege split: unprivileged admissiond (no ledger/key path) drives privileged cmp_admitd (owns sqlite ledger + box key + launch + observation + signing) via verbs",
+  "taxonomy_counts": {
+    "pass_live": 0,
+    "partial": 2,
+    "not_evaluated": 8,
+    "pass_model": 10,
+    "fail": 0
+  },
+  "overall_verdict": "PARTIAL",
+  "overall_detail": "PARTIAL \u2014 privilege boundary + crypto/ledger/wire/at-most-once proven at fixture level; real-systemd + real-remote ACs (AC2,3,5,6,7,8,9,10) pending box staging; AC4/AC14 partial; residual OS-level FS isolation needs real provisioning.",
+  "summary": {
+    "AC1": "pass_model",
+    "AC2": "not_evaluated",
+    "AC3": "not_evaluated",
+    "AC4": "partial",
+    "AC5": "not_evaluated",
+    "AC6": "not_evaluated",
+    "AC7": "not_evaluated",
+    "AC8": "not_evaluated",
+    "AC9": "not_evaluated",
+    "AC10": "not_evaluated",
+    "AC11": "pass_model",
+    "AC12": "pass_model",
+    "AC13": "pass_model",
+    "AC14": "partial",
+    "AC15": "pass_model",
+    "AC16": "pass_model",
+    "AC17": "pass_model",
+    "BND-A": "pass_model",
+    "BND-B": "pass_model",
+    "BND-C": "pass_model"
+  },
+  "results": [
+    {
+      "ac": "AC1",
+      "covers": "A1,A2",
+      "verdict": "pass_model",
+      "detail": "bad job / unknown / oversized-id / colon-id all rejected, no unit, no launch",
+      "evidence": {
+        "reasons": [
+          "schema_or_registry:unknown job '/bin/sh'",
+          "schema_or_registry:unknown job 'nope'",
+          "schema_or_registry:id grammar violation: '20260803T100002Z-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'",
+          "schema_or_registry:id grammar violation: '20260803T100003Z-bad:colon'"
+        ],
+        "units": [],
+        "starts": 0
+      },
+      "evidence_digest": "sha256:82dfb7622b6744cc0c6a68b6de66a6fd2ee7a97c65e900810fed29ff4e49e414"
+    },
+    {
+      "ac": "AC2",
+      "covers": "A3",
+      "verdict": "not_evaluated",
+      "detail": "MODEL ok (fake OOM -> CONSTRAINT_MEMCG + limits); real cgroup OOM/global-runner survival needs real systemd",
+      "evidence": {
+        "model_ok": true
+      },
+      "evidence_digest": "sha256:b9812d8837f440c94ae460860e44f3b0e36ce402bab92a1e43ec5fe44ec0fd3d"
+    },
+    {
+      "ac": "AC3",
+      "covers": "A4,A12",
+      "verdict": "not_evaluated",
+      "detail": "MODEL ok (uid=cmpjob; admit verb is 3-token; poller has no path/bytes/config); live sudo/uid-drop needs real cmpjob+systemd",
+      "evidence": {
+        "model_ok": true,
+        "registry_user": "cmpjob"
+      },
+      "evidence_digest": "sha256:7048a0c1baad2e33baa4a5eb8b02289ed092ff7c895f43d18de7dd624b6ba585"
+    },
+    {
+      "ac": "AC4",
+      "covers": "A5",
+      "verdict": "partial",
+      "detail": "reconciliation relaunches none; replay rejected; Slicer zero-recompute is a MODEL (real resume needs built Slicer + systemd)",
+      "evidence": {
+        "launch_deltas": {
+          "before_start": 0,
+          "restart_active": 0,
+          "restart_fast": 0,
+          "replay": 0
+        },
+        "replay_rejected": true,
+        "indeterminate": [
+          "launch_outcome_unknown"
+        ],
+        "slicer_model": {
+          "first": 100,
+          "resubmit": 0
+        }
+      },
+      "evidence_digest": "sha256:1560e03d883281de3bc8cdbba465afca2b2a70f337c6bc9e730a96577f9f0649"
+    },
+    {
+      "ac": "AC5",
+      "covers": "A6",
+      "verdict": "not_evaluated",
+      "detail": "MODEL ok (restart adopts active unit, no relaunch, terminal from unit exit); real orphan-survival needs real transient unit",
+      "evidence": {
+        "model_ok": true
+      },
+      "evidence_digest": "sha256:b9812d8837f440c94ae460860e44f3b0e36ce402bab92a1e43ec5fe44ec0fd3d"
+    },
+    {
+      "ac": "AC6",
+      "covers": "A7,A10",
+      "verdict": "not_evaluated",
+      "detail": "MODEL ok (nonzero exit -> failed; job self-success ignored; status box-signed only); real self-publish needs real job substrate",
+      "evidence": {
+        "model_ok": true
+      },
+      "evidence_digest": "sha256:b9812d8837f440c94ae460860e44f3b0e36ce402bab92a1e43ec5fe44ec0fd3d"
+    },
+    {
+      "ac": "AC7",
+      "covers": "A8",
+      "verdict": "not_evaluated",
+      "detail": "MODEL ok (progress frozen while runner fresh -> stalled; hostile symlink progress ignored); real SIGSTOP needs real unit",
+      "evidence": {
+        "model_ok": true,
+        "hostile_symlink_ignored": true
+      },
+      "evidence_digest": "sha256:7ab11c404fbfa7196df914cc29b2c3a0b518cb2cd381c4b734d708af574d8ba5"
+    },
+    {
+      "ac": "AC8",
+      "covers": "A9",
+      "verdict": "not_evaluated",
+      "detail": "MODEL ok (broken remote -> FETCH-FAIL health, not idle); real GitHub outage / dead-poller-vs-idle needs box staging",
+      "evidence": {
+        "model_ok": true,
+        "health": "FETCH-FAIL"
+      },
+      "evidence_digest": "sha256:6bcc7157d60ae13148835b66f2753c91cd9d19192459c270b258d09b4a3485ce"
+    },
+    {
+      "ac": "AC9",
+      "covers": "\u00a74.1,\u00a74.3",
+      "verdict": "not_evaluated",
+      "detail": "MODEL ok (terminal carries memory.peak + RuntimeMaxSec; classify_terminal maps real systemctl show); real cgroup peak pending",
+      "evidence": {
+        "model_ok": true
+      },
+      "evidence_digest": "sha256:b9812d8837f440c94ae460860e44f3b0e36ce402bab92a1e43ec5fe44ec0fd3d"
+    },
+    {
+      "ac": "AC10",
+      "covers": "A11",
+      "verdict": "not_evaluated",
+      "detail": "Actions-API check executed with branch-name filter + head_branch confirmation (statuses=['pass']); refs not on real remote yet",
+      "evidence": {
+        "per_ref": {
+          "refs/heads/jobs/queue": {
+            "status": "pass",
+            "total_count": 0,
+            "branch": "jobs/queue",
+            "confirmed_on_branch": 0,
+            "api_returned_off_branch": 0
+          },
+          "refs/heads/jobs/status": {
+            "status": "pass",
+            "total_count": 0,
+            "branch": "jobs/status",
+            "confirmed_on_branch": 0,
+            "api_returned_off_branch": 0
+          },
+          "refs/heads/jobs/runner": {
+            "status": "pass",
+            "total_count": 0,
+            "branch": "jobs/runner",
+            "confirmed_on_branch": 0,
+            "api_returned_off_branch": 0
+          }
+        }
+      },
+      "evidence_digest": "sha256:d8f2975632d7f26ad48e435ca585c819c8439e83360dd2ec471f4e6b5b05deeb"
+    },
+    {
+      "ac": "AC11",
+      "covers": "A2",
+      "verdict": "pass_model",
+      "detail": "same id + different digest -> integrity reject at ledger (UNIQUE) AND authoritative admit; no launch",
+      "evidence": {
+        "ledger_verdict": "INTEGRITY",
+        "reject": true,
+        "launched": false
+      },
+      "evidence_digest": "sha256:c83a095179d0d9f98696bb4d8fdb96f0f0458edb867776ad2270195780a1eb2c"
+    },
+    {
+      "ac": "AC12",
+      "covers": "A13",
+      "verdict": "pass_model",
+      "detail": "wrong-key & unsigned queue commits -> QUEUE-UNSIGNED, never admitted; non-box status not trusted",
+      "evidence": {
+        "wrong": true,
+        "unsigned": true,
+        "non_box_status_trusted": false,
+        "unit": false
+      },
+      "evidence_digest": "sha256:7028be35de784c4bf5257eaca1ff492a821df21b37e366d4e537fbcce52e4801"
+    },
+    {
+      "ac": "AC13",
+      "covers": "A14",
+      "verdict": "pass_model",
+      "detail": "independent processes derive identical request_digest + cursor; merge->NONLINEAR, multi/mutate->MALFORMED",
+      "evidence": {
+        "digest_match": true,
+        "cursor_match": true,
+        "adversarial": {
+          "merge": "QUEUE-NONLINEAR",
+          "multi_add": "QUEUE-MALFORMED",
+          "mutate": "QUEUE-MALFORMED"
+        }
+      },
+      "evidence_digest": "sha256:d0397d750180e55ab0ba41265ec93942fd80e61b6aaf133add525d5dcbea3118"
+    },
+    {
+      "ac": "AC14",
+      "covers": "A12",
+      "verdict": "partial",
+      "detail": "compromised poller: admitd ignores all caller trust env (mirror/signers/registry/backend/ledger/box-key), re-verifies from its own config -> wrong-key HALT, no launch; dispatcher-signed still launches. RESIDUAL: OS-level FS isolation of the config path needs real provisioning",
+      "evidence": {
+        "trust_env_ignored": true,
+        "control_launches": true,
+        "admit_out": {
+          "outcome": "HALT",
+          "kind": "QUEUE-UNSIGNED",
+          "detail": "wrong-key",
+          "ok": true
+        }
+      },
+      "evidence_digest": "sha256:7bc6b27708ebb3bb9fbc76ce42794e163dc8beb6ed1805f6c44c7aa1d018d7d6"
+    },
+    {
+      "ac": "AC15",
+      "covers": "A15",
+      "verdict": "pass_model",
+      "detail": "force-push dropping cursor -> QUEUE-TAMPER halt (falsifiable); rogue not admitted",
+      "evidence": {
+        "tamper_events": 1,
+        "rogue_admitted": false,
+        "cursor_was": "cd861e280fa9"
+      },
+      "evidence_digest": "sha256:6d10de0244b4be616886690a6eb103e3c3dce86004fb8515f709c8d528593e92"
+    },
+    {
+      "ac": "AC16",
+      "covers": "A16",
+      "verdict": "pass_model",
+      "detail": "box-signed OLD status/runner replays detected (STATUS-TAMPER/RUNNER-REPLAY); unchanged reread not a false replay",
+      "evidence": {
+        "replayed_box_signed": true,
+        "status_tamper": true,
+        "unchanged_reread_ok": true,
+        "runner_replay": true
+      },
+      "evidence_digest": "sha256:6c0abf254f9dd9416784220ca6a59a35e25fe33be246a9e4f2b2711fdce61676"
+    },
+    {
+      "ac": "AC17",
+      "covers": "\u00a73.5",
+      "verdict": "pass_model",
+      "detail": "fast-exit-then-collected -> indeterminate/launch_outcome_unknown; never auto-relaunched (starts stay 1)",
+      "evidence": {
+        "indeterminate": true,
+        "starts_after_first": 1,
+        "starts_after_restart": 1
+      },
+      "evidence_digest": "sha256:e8c70ff65a850f227b4a228c2a1aff1c081420da5573f8335ac2e9a2824fa6f2"
+    },
+    {
+      "ac": "BND-A",
+      "covers": "boundary",
+      "verdict": "pass_model",
+      "detail": "poller cfg+code have NO path to ledger/key; cannot sign (public key only); repeated direct admit is at-most-once. RESIDUAL: kernel FS-perm isolation (poller as cmpjob) needs real provisioning",
+      "evidence": {
+        "cfg_no_authority_paths": true,
+        "code_no_authority_refs": true,
+        "cannot_forge_box_sig": true,
+        "repeated_admit_at_most_once": true,
+        "outcomes": [
+          "CREATED",
+          "REPLAY",
+          "REPLAY"
+        ]
+      },
+      "evidence_digest": "sha256:d3b92ff57940b53d61d7591a1743ee60e75d6782e9a7ae7a748c292643ef2748"
+    },
+    {
+      "ac": "BND-B",
+      "covers": "boundary",
+      "verdict": "pass_model",
+      "detail": "pre-launch failure (start-refused / RESERVED crash) -> REJECTED; only STARTING/RUNNING absence -> indeterminate",
+      "evidence": {
+        "startfail_outcome": "REJECTED",
+        "startfail_no_indeterminate": true,
+        "startfail_rejected": true,
+        "reserved_rejected": true,
+        "reserved_no_indeterminate": true,
+        "starting_indeterminate": true
+      },
+      "evidence_digest": "sha256:54d14d0f7e1d1ce36d6315ac0b5bdd8cde686b0cc73dcbac7001f2dcb02d7723"
+    },
+    {
+      "ac": "BND-C",
+      "covers": "boundary",
+      "verdict": "pass_model",
+      "detail": "push-fail leaves events unacked; retry pushes idempotently -> exactly one remote event; same-id/diff-bytes -> CONFLICT",
+      "evidence": {
+        "push_failed": true,
+        "unacked_before": 2,
+        "exactly_one_remote": true,
+        "acked_after": 0,
+        "conflict_detected": true,
+        "event_files": [
+          "events/000001.json",
+          "events/000002.json"
+        ]
+      },
+      "evidence_digest": "sha256:73188435c89c535ad2edadbcec9f1d01c17430ee20059bc6011b80624df6eb9f"
+    }
+  ],
+  "receipt_digest": "sha256:ac2b66cdf11df31c643695fd5cdc421cf9b17c18b0da916e87d9d6efab3e4783"
+}

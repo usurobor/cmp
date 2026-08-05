@@ -1,0 +1,28 @@
+{
+  "ac": "A7",
+  "name": "injected-error surfaced via heartbeat (never silent)",
+  "passed": true,
+  "evidence": {
+    "child_returncode": 1,
+    "stderr_surfaced": true,
+    "error_heartbeat_roundtrip": {
+      "verified": true,
+      "fetched": {
+        "at": "2026-08-03T14:50:38Z",
+        "error_class": "injected",
+        "heartbeat_seq": 500,
+        "message": "injected error at shard 2",
+        "run_id": "30824612821",
+        "shard": 2,
+        "stage": "err",
+        "status": "error"
+      },
+      "fetched_digest": "f3eb2ef1c15f9f141171955e1322379adfb090e510f1679372467041214d83d7",
+      "expected_digest": "f3eb2ef1c15f9f141171955e1322379adfb090e510f1679372467041214d83d7",
+      "run_id_match": true,
+      "seq_match": true
+    },
+    "error_visible_on_observability_surface": true,
+    "silent_skip": false
+  }
+}

@@ -1,0 +1,63 @@
+# EXP001 one-off inspect/rescue (no checkout — reads cn-sigma's disk directly so
+# it does NOT git-clean the gitignored corpus left by a cancelled collect run).
+name: exp001-inspect
+
+on:
+  push:
+    branches: [claude/cmp-experiment-001-issue-c1oov4]
+    paths: ['.github/workflows/exp001-inspect.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: exp001-inspect
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, cn-sigma]
+    steps:
+      - name: Inspect leftover corpus on box
+        run: |
+          set -e
+          WS="${GITHUB_WORKSPACE}"
+          DATA="$WS/data/raw/polymarket"
+          echo "host=$(hostname) workspace=$WS"
+          echo "data dir: $DATA"
+          if [ ! -d "$DATA" ]; then echo "NO DATA DIR — nothing to inspect"; exit 0; fi
+          echo "pages: $(ls "$DATA"/markets_p*.json 2>/dev/null | wc -l)"
+          echo "prices: $(ls "$DATA"/prices/*.json 2>/dev/null | wc -l)"
+          du -sh "$DATA" 2>/dev/null || true
+          echo "checkpoint:"; cat "$DATA/_checkpoint.json" 2>/dev/null || echo "(none)"
+          echo "manifest:"; cat "$WS/docs/experiment-001/manifest.json" 2>/dev/null || echo "(none)"
+          python3 - "$DATA" <<'PY'
+          import glob, json, sys
+          d = sys.argv[1]
+          pages = sorted(glob.glob(f"{d}/markets_p*.json"))
+          print(f"\n=== {len(pages)} pages on disk ===")
+          if not pages:
+              raise SystemExit(0)
+          first = json.load(open(pages[0]))
+          fm = first["markets"] if isinstance(first, dict) else first
+          print("keys on markets[0]:", sorted(fm[0].keys()))
+          print("\n----- SAMPLE MARKET (page0[0]) -----")
+          print(json.dumps(fm[0], indent=2)[:4000])
+          last = json.load(open(pages[-1]))
+          lm = last["markets"] if isinstance(last, dict) else last
+          print("\nid first page[0]:", fm[0].get("id"), "| last page[-1]:", lm[-1].get("id"))
+          prices = sorted(glob.glob(f"{d}/prices/*.json"))
+          if prices:
+              print("\n----- SAMPLE PRICE HISTORY (head) -----")
+              print(open(prices[0]).read()[:1500])
+          PY
+
+      - name: Rescue corpus off the workspace (survives future checkouts)
+        run: |
+          WS="${GITHUB_WORKSPACE}"
+          dest="$HOME/cmp-exp001-rescue"
+          mkdir -p "$dest"
+          if [ -d "$WS/data/raw/polymarket" ]; then
+            cp -r "$WS/data/raw/polymarket" "$dest/" && echo "rescued to $dest/polymarket"
+            du -sh "$dest/polymarket" || true
+          else
+            echo "nothing to rescue"
+          fi

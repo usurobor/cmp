@@ -20,3 +20,7 @@ data/
 .vscode/
 .idea/
 *.swp
+.embcache/
+.slicer-work/
+derived/slicer/
+.cn/vendor/

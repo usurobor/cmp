@@ -1,0 +1,14 @@
+# EXAMPLE — operator-installed to /etc/systemd/system/cmp-poller.service
+# Unprivileged poller. Runs as a dedicated non-root user; holds no keys and no
+# root. Its only inbound data is the git queue ref it fetches (pull, not push).
+[Unit]
+Description=CMP box job poller (v0) — fetch jobs/queue, admit the one fixed slicer job
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=cmppoll
+# Launching a job needs systemd-run/systemctl. On the box this is granted via a
+# narrow polkit rule for cmppoll to start/inspect cmpjob-* units only.
+ExecStart=/usr/bin/python3 /opt/cmp/runner/v0/poller.py /etc/cmp-jobs/poller.json

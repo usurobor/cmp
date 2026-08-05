@@ -1,0 +1,58 @@
+{
+  "ac": "A4.no-trigger",
+  "name": "slicer-status/** triggers no workflow (static + runtime API)",
+  "passed": true,
+  "evidence": {
+    "sample_ref": "slicer-status/deadbeef",
+    "workflows": {
+      "exp001-batch.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-collect.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-embed.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-inspect.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-probe.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      },
+      "exp001-relations.yml": {
+        "has_push": false,
+        "branches": []
+      },
+      "slicer-sub-a.yml": {
+        "has_push": true,
+        "branches": [
+          "claude/cmp-experiment-001-issue-c1oov4"
+        ]
+      }
+    },
+    "offending_workflows": [],
+    "runtime_api_check": {
+      "available": true,
+      "status_branch": "slicer-status/30824612821",
+      "runs_triggered_by_status_ref": 0,
+      "passed": true,
+      "checked_at": "2026-08-03T14:50:40Z"
+    }
+  }
+}

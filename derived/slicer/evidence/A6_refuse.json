@@ -1,0 +1,36 @@
+{
+  "ac": "A6.refuse",
+  "name": "uncheckpointable long stage refused before launch",
+  "passed": true,
+  "evidence": {
+    "threshold_s": 30.0,
+    "long_no_checkpoint": {
+      "admit": false,
+      "reason": "projected work exceeds max_uncheckpointed_work_s and no checkpoint boundary",
+      "projected_wall_s": 3600.0,
+      "threshold_s": 30.0,
+      "checkpoint_boundary": "none"
+    },
+    "long_with_checkpoint": {
+      "admit": true,
+      "reason": "checkpointed or within uncheckpointed budget",
+      "projected_wall_s": 3600.0,
+      "threshold_s": 30.0,
+      "checkpoint_boundary": "shard",
+      "launched": true
+    },
+    "short_no_checkpoint": {
+      "admit": true,
+      "reason": "checkpointed or within uncheckpointed budget",
+      "projected_wall_s": 1.0,
+      "threshold_s": 30.0,
+      "checkpoint_boundary": "none",
+      "launched": true
+    },
+    "stage_descriptor_used_on_real_path": {
+      "checkpoint_boundary": "shard"
+    },
+    "refused_without_launching": true,
+    "note": "admit_stage gates every real launch (see A6); the uncheckpointable long stage never ran"
+  }
+}

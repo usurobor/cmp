@@ -1,0 +1,115 @@
+# Slicer Sub A — generic spine proven on a synthetic checkpointed long stage.
+# Executable contract: issue v2.2 @ 792f65d. Runs on cn-sigma. No model, no
+# corpus, no ANN, no retrieval, no Sub B/C. Fault-injection/over-budget/swap-
+# monitor tests run in isolated RLIMIT-capped child processes (never the daemon).
+#
+# NOTE: this workflow does NOT trigger on refs/heads/slicer-status/** — the
+# heartbeat status refs must enqueue no workflow (AC-A4). It triggers only on the
+# work branch for its own sources, or manual dispatch.
+#
+# Anti-false-green (Pi #1): checkpoint state lives outside the checkout
+# (SLICER_STATE_DIR); the receipt/evidence are quarantined and regenerated each
+# run; the gate fails unless the receipt is fresh (run_id == GITHUB_RUN_ID,
+# git_sha == GITHUB_SHA), the oracle process exited 0, every evidence digest
+# matches, and the contract is accepted.
+name: slicer-sub-a
+
+on:
+  push:
+    branches: [claude/cmp-experiment-001-issue-c1oov4]
+    paths:
+      - 'scripts/slicer_sub_a.py'
+      - 'slicer/catalog.json'
+      - '.github/workflows/slicer-sub-a.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: slicer-sub-a
+  cancel-in-progress: false
+
+jobs:
+  sub-a:
+    runs-on: [self-hosted, cn-sigma]
+    env:
+      OMP_NUM_THREADS: "1"
+      ORT_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: false
+      - name: Run Sub A oracles (synthetic spine)
+        id: run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          # DURABLE checkpoint root outside the checkout and outside RUNNER_TEMP
+          # (RUNNER_TEMP is emptied each job; this path persists across jobs).
+          export SLICER_STATE_DIR="$HOME/.cmp/slicer/state"
+          mkdir -p "$SLICER_STATE_DIR"
+          echo "state_root=$SLICER_STATE_DIR"
+          set +e
+          python3 scripts/slicer_sub_a.py oracles
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+      - name: Commit receipt + evidence
+        if: always()
+        env:
+          BRANCH: claude/cmp-experiment-001-issue-c1oov4
+        run: |
+          git config user.name "cn-sigma-runner"
+          git config user.email "runner@cn-sigma"
+          git add -f derived/slicer/sub_a_receipt.json derived/slicer/evidence || true
+          if git diff --cached --quiet; then
+            echo "no receipt changes"; exit 0
+          fi
+          git commit -m "slicer Sub A: receipt + evidence [skip ci]"
+          for i in 1 2 3 4 5; do
+            git fetch origin "$BRANCH" && git rebase "origin/$BRANCH" && \
+              git push origin "HEAD:$BRANCH" && exit 0
+            echo "push retry $i"; git rebase --abort 2>/dev/null || true; sleep 3
+          done
+          echo "failed to push receipt"; exit 1
+      - name: Enforce Sub A gate (fresh + proof-carrying + accepted)
+        if: always()
+        env:
+          ORACLE_RC: ${{ steps.run.outputs.rc }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, hashlib
+          def sha256_file(p):
+              h = hashlib.sha256()
+              with open(p, "rb") as f:
+                  for c in iter(lambda: f.read(65536), b""):
+                      h.update(c)
+              return h.hexdigest()
+          rp = "derived/slicer/sub_a_receipt.json"
+          if not os.path.exists(rp):
+              print("GATE FAIL: no receipt produced this run"); sys.exit(1)
+          r = json.load(open(rp))
+          fails = []
+          if os.environ.get("ORACLE_RC") != "0":
+              fails.append(f"oracle process rc={os.environ.get('ORACLE_RC')} (nonzero)")
+          if r.get("run_id") != os.environ.get("GITHUB_RUN_ID"):
+              fails.append(f"stale/foreign receipt: run_id {r.get('run_id')} != GITHUB_RUN_ID {os.environ.get('GITHUB_RUN_ID')}")
+          if r.get("git_sha") != os.environ.get("GITHUB_SHA"):
+              fails.append(f"git_sha {r.get('git_sha')} != GITHUB_SHA {os.environ.get('GITHUB_SHA')}")
+          for ref in r.get("evidence_refs", []):
+              fp = os.path.join("derived/slicer", ref["file"])
+              if not os.path.exists(fp) or sha256_file(fp) != ref["sha256"]:
+                  fails.append(f"evidence digest mismatch: {ref['file']}")
+          for ax in ("execution_status", "contract_status", "retrieval_instrument_status", "discovery_status"):
+              print(f"{ax:28s}: {r.get(ax)}")
+          if r.get("contract_status") != "accepted":
+              fails.append(f"contract_status={r.get('contract_status')}")
+          if fails:
+              print("GATE FAIL:")
+              for f in fails:
+                  print("  -", f)
+              sys.exit(1)
+          print("GATE PASS: fresh, proof-carrying, accepted")
+          PY
