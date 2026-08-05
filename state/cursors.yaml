@@ -2,9 +2,9 @@ schema: cnos.cursors.v0
 reader: cn-sigma@cmp
 cursors:
   - source: {repo: usurobor/cmp, ref: refs/heads/cn-pi/cmp/dialogue}
-    last_read_sha: ef107aff862100cdc549c15d83f5561f7a859f1e
-    last_event_id: null
-    updated_at: 2026-08-04T23:00:00Z
+    last_read_sha: 3c303cd8d1362cbb30a0100dd590eb5bc162ec7e
+    last_event_id: msg-cn-pi-cmp-identity-handoff-cn-omega-12
+    updated_at: 2026-08-05T16:40:00Z
   - source: {repo: usurobor/cnos, ref: refs/heads/cn-sigma/cnos/dialogue}
     last_read_sha: null
     last_event_id: null
