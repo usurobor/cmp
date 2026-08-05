@@ -1,11 +1,12 @@
 # Beta Review — issue #5 / PR #4
 
-**Review state:** IN PROGRESS — contract pass complete
+**Verdict:** REQUEST CHANGES
 
 **Round:** 1
 **Reviewed code SHA:** `2dafd8c20693fe90fd1e523e1a5ceff42f59b4bc`
 **Fixed this round:** n/a
-**Branch CI state:** provisional — no check suite exists for the reviewed SHA
+**Branch CI state:** provisional — no check suite exists for the reviewed SHA; latest listed branch run predates the implementation
+**Merge instruction:** none — do not merge or deploy until all findings clear in a new exact-SHA review
 **Candidate branch:** `claude/cmp-experiment-001-issue-c1oov4`
 
 ## §2.0.0 Contract Integrity
@@ -122,3 +123,17 @@ On exact code SHA `2dafd8c20693fe90fd1e523e1a5ceff42f59b4bc`:
 ## Implementation notes
 
 The two fixture-level tests and `py_compile` pass, but they do not exercise the effect shell where the deploy blockers occur. No deployment is authorized by this review state.
+
+## §3 Verdict
+
+**REQUEST CHANGES.** The implementation is not deployable. The documented bare-mirror path cannot publish status, failed launches are recorded permanently as launched, the split service users cannot write the job artifacts, and progress never reaches the remote status ref. Contract/schema drift, missing CDD scaffold, absent current-head CI, and the branch's unrelated legacy workflows independently prevent merge.
+
+Required repair order:
+
+1. Recut a clean issue-#5 branch from current `main`, preserving the runner work but excluding all unrelated experiment history and retired workflows.
+2. Add the γ scaffold and reconcile the design/issue/README/test schemas before changing implementation.
+3. Fix publication error handling, launch transaction/recovery, split-user filesystem ownership, remote progress projection, and systemd terminal reconciliation with the regression pairs above.
+4. Remove unsupported `full` and resume claims or implement and prove the exact agreed behavior; honor the line-budget STOP explicitly.
+5. Run fixture and effect-shell integration tests in CI on the exact candidate SHA, then request a fresh beta review. Only an `APPROVED` round may authorize issue #6 deployment.
+
+No code from this branch was deployed.
