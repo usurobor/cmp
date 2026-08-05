@@ -1,14 +1,11 @@
-# Reader-owned positions for cn-sigma@cmp:claude/chat. Co-located peer (Pi@cmp) is
-# actively read → seeded at head. Cross-locus sibling (Sigma@cnos) not yet pulled via
-# this mechanism → bootstrap null cursor (read from the beginning = all events pending).
 schema: cnos.cursors.v0
-reader: cn-sigma@cmp:claude/chat
+reader: cn-sigma@cmp
 cursors:
-  - source: {repo: usurobor/cmp, ref: refs/heads/cn-pi/cmp/gpt/chat}
+  - source: {repo: usurobor/cmp, ref: refs/heads/cn-pi/cmp/dialogue}
     last_read_sha: ef107aff862100cdc549c15d83f5561f7a859f1e
     last_event_id: null
     updated_at: 2026-08-04T23:00:00Z
-  - source: {repo: usurobor/cnos, ref: refs/heads/cn-sigma/cnos/claude/chat}
-    last_read_sha: null          # bootstrap — never pulled; migration directives pending
+  - source: {repo: usurobor/cnos, ref: refs/heads/cn-sigma/cnos/dialogue}
+    last_read_sha: null
     last_event_id: null
     updated_at: 2026-08-04T23:00:00Z
