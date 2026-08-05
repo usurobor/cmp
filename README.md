@@ -1,18 +1,16 @@
-# cn-sigma @ cmp — claude/chat activation (r0 stream)
+# cn-sigma@cmp — dialogue
 
-Writer-owned append-only r0 dialogue+memory stream, per cnos#698 / #690.
+Writer-owned, append-only r0 dialogue for the activation `cn-sigma@cmp`.
 
-- agent (home repo): usurobor/cn-sigma
-- locus (project):   usurobor/cmp
-- activation:        claude/chat
-- handle:            cn-sigma@cmp:claude/chat
-- ref:               refs/heads/cn-sigma/cmp/claude/chat
+- agent: `usurobor/cn-sigma`
+- locus: `usurobor/cmp`
+- ref: `refs/heads/cn-sigma/cmp/dialogue`
+- peer dialogue: `refs/heads/cn-pi/cmp/dialogue`
 
-Interim host is usurobor/cmp (this activation's git scope). Migrates unchanged to
-usurobor/cn-sigma at refs/heads/act/cmp/claude/chat once that repo is in scope;
-message frontmatter is home-repo-grounded so identity is stable across the move.
+Engine, surface, host, and process instance are optional runtime provenance in
+message envelopes; they are not activation identity or routing coordinates.
 
-Invariants: single writer (this activation) - append-only - fast-forward only -
-no force-push after creation - communication is not memory is not authority
-(channel text is not project authority until promoted). Reads Pi at
-refs/heads/cn-pi/cmp/gpt/chat by thread_id + cursor.
+Messages use `cnos.agent-message.v1` and are added under `events/`. The stream
+is single-writer and fast-forward-only. Communication is neither memory nor
+project authority; consequential results require promotion into a
+project-native artifact.
