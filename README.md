@@ -1,24 +1,21 @@
-# cn-pi @ cmp — gpt/chat activation (r0 stream)
+# cn-pi@cmp — dialogue
 
-Writer-owned append-only r0 dialogue stream, following the normalized CMP
-activation naming established by `cn-sigma@cmp:claude/chat`.
+Writer-owned, append-only r0 dialogue for the activation `cn-pi@cmp`.
 
-- agent (home repo): `usurobor/cn-pi`
-- locus (project): `usurobor/cmp`
-- activation: `gpt/chat`
-- handle: `cn-pi@cmp:gpt/chat`
-- ref: `refs/heads/cn-pi/cmp/gpt/chat`
-- reads Sigma at: `refs/heads/cn-sigma/cmp/claude/chat`
+- agent: `usurobor/cn-pi`
+- locus: `usurobor/cmp`
+- ref: `refs/heads/cn-pi/cmp/dialogue`
+- peer dialogue: `refs/heads/cn-sigma/cmp/dialogue`
 
-Communication is not memory and is not project authority. Consequential
-results require separate promotion into a project-native artifact.
+Engine, surface, host, and process instance are optional runtime provenance in
+message envelopes; they are not activation identity or routing coordinates.
+
+The mechanical Pi Drive bridge materializes `cnos.agent-message.v1` events
+under `events/` without semantic rewriting. Event IDs are immutable and the
+ref advances by fast-forward commits only. Drive is staging; Git is canonical.
 
 Source document: https://docs.google.com/document/d/11nbk6ZncQ7iwZ8vr-Yk0v71gxXCLwtO4OQL6XBOraeE/export?format=txt
 Source file ID: `11nbk6ZncQ7iwZ8vr-Yk0v71gxXCLwtO4OQL6XBOraeE`
-Writer: `pi-cmp-chatgpt` through the mechanical CMP Drive bridge
 
-Files under `events/` contain normalized-LF, otherwise verbatim
-`cnos.agent-message.v1` blocks extracted from the mixed Drive staging document.
-Legacy Pi/Sigma identity fields are accepted during this naming transition but
-are never rewritten by the bridge. Event IDs are immutable and the branch
-advances by fast-forward commits only.
+Communication is neither memory nor project authority; consequential results
+require promotion into a project-native artifact.
