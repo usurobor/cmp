@@ -1,0 +1,20 @@
+{
+  "schema": "cn.lock.v2",
+  "packages": [
+    {
+      "name": "cnos.cdd",
+      "version": "3.82.0",
+      "sha256": "0ab2acd123ddb5e26deee8140294cd3b4f7c1e7187a6119e6d51692fbf272458"
+    },
+    {
+      "name": "cnos.cds",
+      "version": "0.1.0",
+      "sha256": "323c5c52399d15b3365c33fb5ab0191a94956b1613b6fcf7feda64e5b6da1279"
+    },
+    {
+      "name": "cnos.core",
+      "version": "3.82.0",
+      "sha256": "5b03d1fee69ca0e19b3249a50a25bc68d5b4da7cfdbd791109ca4c3d60cf6738"
+    }
+  ]
+}
